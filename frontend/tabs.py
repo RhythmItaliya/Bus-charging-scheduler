@@ -28,19 +28,22 @@ _IL = "icon-label"  # CSS class defined in styles.inject_css()
 # ---------------------------------------------------------------------------
 
 def _icon_header(level: int, icon_name: str, label: str) -> None:
-    """Render an h2/h3 heading with an SVG icon using st.markdown."""
-    tag = f"h{level}"
+    """Render an h2/h3 heading with an SVG icon."""
+    sz = 20 if level == 2 else 17
     st.markdown(
-        f'<{tag} class="{_IL}">{icon(icon_name)} {label}</{tag}>',
+        f'<h{level} style="display:flex;align-items:center;gap:6px;'
+        f'font-weight:700;margin:0 0 4px 0">'
+        f'{icon(icon_name, size=sz)} {label}</h{level}>',
         unsafe_allow_html=True,
     )
 
 
 def _icon_label(icon_name: str, label: str, small: bool = False) -> None:
-    """Render an inline icon-label span via st.markdown."""
-    style = ' style="font-size:0.82rem;font-weight:400"' if small else ""
+    """Render an inline icon-label span."""
+    style = "font-size:0.82rem;color:#555" if small else "font-weight:600"
     st.markdown(
-        f'<span class="{_IL}"{style}>{icon(icon_name)} {label}</span>',
+        f'<div style="display:flex;align-items:center;gap:5px;{style};margin:4px 0">'
+        f'{icon(icon_name, size=14 if small else 15)} {label}</div>',
         unsafe_allow_html=True,
     )
 
@@ -159,11 +162,12 @@ def render_bus_tab(scenario: Scenario, result: ScheduleResult) -> None:
 
 
 def _metric_col(col, icon_name: str, label: str, value, sub: str) -> None:
-    """Render an icon label above a metric inside a column."""
+    """Render an SVG icon label above a metric inside a column."""
     with col:
         st.markdown(
-            f'<span class="{_IL}" style="font-size:0.8rem">'
-            f'{icon(icon_name)} {label}</span>',
+            f'<div style="display:flex;align-items:center;gap:4px;'
+            f'font-size:0.8rem;font-weight:600;margin:2px 0">'
+            f'{icon(icon_name, size=14)} {label}</div>',
             unsafe_allow_html=True,
         )
         st.metric(label=sub, value=value)
@@ -186,9 +190,11 @@ def render_station_tab(scenario: Scenario, result: ScheduleResult) -> None:
         stn = scenario.stations[node]
         with st.expander(f"Station {node} — {stn.num_chargers} charger(s)", expanded=True):
             st.markdown(
-                f'<span class="{_IL}">'
-                f'{icon("map_pin")} <b>Station {node}</b> · {stn.num_chargers} charger(s)'
-                f'</span>',
+                f'<div style="display:flex;align-items:center;gap:5px;'
+                f'font-weight:600;margin:2px 0">'
+                f'{icon("map_pin", size=14)} '
+                f'<span>Station <strong>{node}</strong> · {stn.num_chargers} charger(s)</span>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
             stn_df = to_station_table(result, node)

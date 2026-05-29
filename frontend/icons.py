@@ -148,25 +148,48 @@ ICONS: dict[str, str] = {
 }
 
 
-def icon(name: str, label: str = "") -> str:
+# ---------------------------------------------------------------------------
+# Rendering helper
+# ---------------------------------------------------------------------------
+
+# Default stroke colour for icons rendered inside st.html() iframes.
+# st.html() creates a sandboxed shadow DOM so "currentColor" cannot inherit
+# from the page's text colour — an explicit hex value is required.
+_DEFAULT_STROKE = "#374151"  # Tailwind gray-700 — readable on white and light grey
+
+
+def icon(name: str, label: str = "", size: int = 16, colour: str = _DEFAULT_STROKE) -> str:
     """Return an inline-flex HTML span with an SVG icon beside optional text.
 
-    The SVG receives ``vertical-align:middle`` so it sits on the text baseline
-    regardless of font size.  Gap between icon and label is 4 px.
+    The SVG is given an explicit width/height (default 16 px) and
+    ``vertical-align:middle`` so it sits on the text baseline regardless of
+    the surrounding font size.  Gap between icon and label is 4 px.
+
+    Works correctly in both ``st.markdown(unsafe_allow_html=True)`` and
+    ``st.html()``.  Inside ``st.html()``, ``stroke="currentColor"`` cannot
+    inherit from the page, so ``colour`` replaces it with an explicit hex.
 
     Args:
-        name:  Key from the ICONS dict (e.g. "bolt", "bus").
-        label: Optional text to display to the right of the icon.
+        name:   Key from the ICONS dict (e.g. "bolt", "bus").
+        label:  Optional text to display to the right of the icon.
+        size:   Icon width and height in pixels (default 16).
+        colour: Explicit stroke colour (default #374151 dark grey).
 
     Returns:
-        An HTML string safe for ``st.markdown(..., unsafe_allow_html=True)``.
+        An HTML string containing an inline SVG span.
     """
+    import re
+
     raw = ICONS.get(name, "")
-    svg = raw.replace("<svg ", '<svg style="vertical-align:middle;flex-shrink:0" ', 1)
-    base = 'display:inline-flex;align-items:center;line-height:1.4'
+    # Override width/height for size= parameter
+    svg = re.sub(r'width="\d+"',  f'width="{size}"',  raw, count=1)
+    svg = re.sub(r'height="\d+"', f'height="{size}"', svg, count=1)
+    # Replace stroke="currentColor" with an explicit colour that works everywhere
+    svg = svg.replace('stroke="currentColor"', f'stroke="{colour}"')
+    # Ensure vertical alignment
+    svg = svg.replace("<svg ", '<svg style="vertical-align:middle;flex-shrink:0" ', 1)
+
+    base = "display:inline-flex;align-items:center;line-height:1.4"
     if label:
-        return (
-            f'<span style="{base};gap:4px">'
-            f'{svg}<span>{label}</span></span>'
-        )
+        return f'<span style="{base};gap:4px">{svg}<span>{label}</span></span>'
     return f'<span style="{base}">{svg}</span>'

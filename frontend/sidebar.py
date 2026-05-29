@@ -5,8 +5,11 @@ Renders:
   • App title with bolt SVG icon
   • Scenario dropdown (required first/topmost — R32)
   • Weight sliders (individual, operator, overall) defaulting to scenario values
-  • Reset button
+  • Reset button (clears session state keys to restore scenario defaults)
   • Active-weight readout
+
+Uses st.markdown(unsafe_allow_html=True) for SVG labels. Icons use explicit
+hex stroke colours (not "currentColor") for maximum compatibility.
 
 Returns selected_path, w_individual, w_operator, w_overall to the caller.
 """
@@ -21,9 +24,6 @@ from scheduler.config import SCENARIOS_DIR
 from scheduler.loader import list_scenarios, load_scenario
 from frontend.icons import icon
 
-# Shared CSS class used on label spans — defined once in styles.inject_css()
-_IL = "icon-label"
-
 
 def render_sidebar() -> tuple[str, float, float, float]:
     """Render the full sidebar and return the user's current selections.
@@ -37,7 +37,9 @@ def render_sidebar() -> tuple[str, float, float, float]:
     with st.sidebar:
         # ── Title ─────────────────────────────────────────────────────────
         st.markdown(
-            f'<h2 class="{_IL}">{icon("bolt")} Bus Charging Scheduler</h2>',
+            f'<div style="display:flex;align-items:center;gap:6px;'
+            f'font-size:1.1rem;font-weight:700;margin:0 0 2px 0">'
+            f'{icon("bolt", size=20)} Bus Charging Scheduler</div>',
             unsafe_allow_html=True,
         )
         st.caption("Bengaluru → A → B → C → D → Kochi · 540 km · 240 km range")
@@ -72,8 +74,15 @@ def render_sidebar() -> tuple[str, float, float, float]:
         # ── Weight sliders ────────────────────────────────────────────────
         default_weights = load_scenario(selected_path).weights
 
+        # Widget keys scoped to scenario so switching resets to scenario defaults
+        _k_ind = f"w_ind_{selected_name}"
+        _k_op  = f"w_op_{selected_name}"
+        _k_all = f"w_all_{selected_name}"
+
         st.markdown(
-            f'<span class="{_IL}">{icon("settings")} Weight Controls</span>',
+            f'<div style="display:flex;align-items:center;gap:5px;'
+            f'font-weight:600;font-size:0.95rem;margin:4px 0 2px 0">'
+            f'{icon("settings", size=16)} Weight Controls</div>',
             unsafe_allow_html=True,
         )
         st.caption("Tune the three soft-objective multipliers. Scenario 4 uses operator = 2.0.")
@@ -83,38 +92,47 @@ def render_sidebar() -> tuple[str, float, float, float]:
             min_value=0.0, max_value=5.0, step=0.5,
             value=default_weights.individual,
             help="Penalises total charger queue time per bus (S1).",
-            key=f"w_ind_{selected_name}",
+            key=_k_ind,
         )
         w_operator = st.slider(
             "Operator Fairness",
             min_value=0.0, max_value=5.0, step=0.5,
             value=default_weights.operator,
             help="Penalises uneven wait variance within each operator's fleet (S2).",
-            key=f"w_op_{selected_name}",
+            key=_k_op,
         )
         w_overall = st.slider(
             "Overall Makespan",
             min_value=0.0, max_value=5.0, step=0.5,
             value=default_weights.overall,
             help="Penalises the total clock span of the operation (S3).",
-            key=f"w_all_{selected_name}",
+            key=_k_all,
         )
 
         # ── Reset button ──────────────────────────────────────────────────
+        # Deletes slider session-state keys so Streamlit reverts them to
+        # their default= values on the next rerun — correct Streamlit reset pattern.
         st.markdown(
-            f'<span class="{_IL}" style="font-size:0.82rem;font-weight:400">'
-            f'{icon("reset")} Reset to scenario defaults</span>',
+            f'<div style="display:flex;align-items:center;gap:5px;'
+            f'font-size:0.82rem;color:#555;margin:6px 0 2px 0">'
+            f'{icon("reset", size=14)} Reset to scenario defaults</div>',
             unsafe_allow_html=True,
         )
         if st.button("Reset weights", use_container_width=True, key="reset_btn"):
+            for key in (_k_ind, _k_op, _k_all):
+                if key in st.session_state:
+                    del st.session_state[key]
             st.rerun()
 
         # ── Active weights readout ────────────────────────────────────────
         st.divider()
         st.markdown(
-            f'<span class="{_IL}" style="font-size:0.82rem;font-weight:400">'
-            f'{icon("activity")} ind <b>{w_individual}</b> · '
-            f'op <b>{w_operator}</b> · all <b>{w_overall}</b></span>',
+            f'<div style="display:flex;align-items:center;gap:5px;'
+            f'font-size:0.82rem;color:#555;margin:2px 0">'
+            f'{icon("activity", size=14)} '
+            f'ind <strong>{w_individual}</strong> · '
+            f'op <strong>{w_operator}</strong> · '
+            f'all <strong>{w_overall}</strong></div>',
             unsafe_allow_html=True,
         )
 

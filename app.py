@@ -99,8 +99,9 @@ if violations:
     st.markdown(
         f'<div style="background:#f8d7da;border-left:4px solid #dc3545;'
         f'padding:.6rem 1rem;border-radius:4px;margin-bottom:.5rem">'
-        f'<span class="{_IL}">{icon("alert")} <b>Schedule validation failures:</b></span><br>'
-        + "<br>".join(f"• {v}" for v in violations)
+        f'<div style="display:flex;align-items:center;gap:5px;font-weight:600">'
+        f'{icon("alert", size=18)} Schedule validation failures:</div><br>'
+        + "<br>".join(f"&bull; {v}" for v in violations)
         + "</div>",
         unsafe_allow_html=True,
     )
@@ -108,10 +109,11 @@ else:
     st.markdown(
         f'<div style="background:#d4edda;border-left:4px solid #28a745;'
         f'padding:.6rem 1rem;border-radius:4px;margin-bottom:.5rem">'
-        f'<span class="{_IL}">'
-        f'{icon("check_circle")} <b>Schedule valid</b> — '
-        f'{len(result.bus_plans)} buses · total objective <b>{result.total_objective:,.1f}</b>'
-        f'</span></div>',
+        f'<div style="display:flex;align-items:center;gap:5px">'
+        f'{icon("check_circle", size=18)} '
+        f'<span><b>Schedule valid</b> \u2014 '
+        f'{len(result.bus_plans)} buses \u00b7 total objective <b>{result.total_objective:,.1f}</b>'
+        f'</span></div></div>',
         unsafe_allow_html=True,
     )
 
