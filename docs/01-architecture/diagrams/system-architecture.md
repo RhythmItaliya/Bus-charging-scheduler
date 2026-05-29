@@ -2,8 +2,14 @@
 
 ```mermaid
 flowchart TD
-    subgraph Presentation["Presentation (Streamlit, app.py)"]
-        UI[Dropdown + 3 tabbed views + weight sliders]
+    subgraph Presentation["Presentation layer"]
+        APP["app.py (orchestrator ~100 lines)"]
+        subgraph Frontend["frontend/ package"]
+            ICO["icons.py — SVG library"]
+            STY["styles.py — inject_css()"]
+            SID["sidebar.py — render_sidebar()"]
+            TAB["tabs.py — render_*_tab()"]
+        end
     end
     subgraph Adapters["Adapter layer (scheduler/adapters.py)"]
         AD[DataFrame builders + HH:MM formatting]
@@ -28,7 +34,13 @@ flowchart TD
         FILES[data/scenarios/*.json]
         LOAD[loader.py]
     end
-    UI --> AD --> ENG
+
+    APP --> Frontend
+    APP --> ENG
+    APP --> VAL
+    APP --> LOAD
+    TAB --> AD
+    AD --> ENG
     ENG --> PLN --> MOD
     ENG --> RES
     ENG --> OBJ --> REG
@@ -36,9 +48,9 @@ flowchart TD
     REG --> SOFT --> MOD
     ENG --> MOD
     PHY --> MOD
-    UI --> VAL --> REG
+    VAL --> REG
     FILES --> LOAD --> MOD
-    UI --> LOAD
 ```
 
-> Dependency arrows point downward only. Nothing below imports anything above it.
+> Dependency arrows point downward only. Nothing in `scheduler/` imports `frontend/` or `app.py`.
+> Only `app.py` and `frontend/` import Streamlit.

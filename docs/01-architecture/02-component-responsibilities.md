@@ -56,6 +56,35 @@ DataFrame builders + `minutes_to_hhmm`. **Responsibility:** all human formatting
 on:** `model`, pandas.
 
 ## `app.py`
-Streamlit shell: dropdown, weight sliders, three tabbed views, startup validation banner.
-**Depends on:** `loader`, `engine`, `validate`, `adapters`. **The only file importing
-Streamlit.**
+
+Thin orchestrator (~100 lines): `set_page_config` → `inject_css` → `render_sidebar` →
+`_cached_schedule` → validation banner → three `st.tabs`. **No rendering logic here.**
+**Depends on:** `frontend/`, `scheduler/loader`, `scheduler/engine`, `scheduler/validate`,
+`scheduler/model`.
+
+## `frontend/icons.py`
+
+`ICONS: dict[str, str]` of Heroicons SVGs + `icon(name, label) → str` helper.
+**Responsibility:** single source of truth for all SVG icons; no emoji anywhere.
+Injects `vertical-align:middle` into every SVG for baseline alignment.
+**Depends on:** nothing (pure string functions).
+
+## `frontend/styles.py`
+
+`inject_css()` — one call injects all global CSS: `.icon-label` class, wait-cell colours,
+metric card padding, and tab SVG `::before` icons via encoded data-URIs.
+**Depends on:** `streamlit`.
+
+## `frontend/sidebar.py`
+
+`render_sidebar() → (selected_path, w_individual, w_operator, w_overall)`.
+**Responsibility:** scenario dropdown (R32: first/topmost), weight sliders, reset button,
+active-weight readout. Calls `st.stop()` on missing scenario data.
+**Depends on:** `frontend/icons`, `scheduler/config`, `scheduler/loader`, `streamlit`.
+
+## `frontend/tabs.py`
+
+`render_input_tab`, `render_bus_tab`, `render_station_tab` + shared private helpers:
+`_icon_header`, `_icon_label`, `_metric_col`, `_highlight_wait`.
+**Responsibility:** all tab content rendering, zero duplicated markup.
+**Depends on:** `frontend/icons`, `scheduler/adapters`, `scheduler/model`, `streamlit`.

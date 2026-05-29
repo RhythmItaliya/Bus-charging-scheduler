@@ -20,8 +20,10 @@ weights, scenario, and the output objects. The **rule framework layer**
 (`scheduler/rules/`) holds the pluggable hard and soft rules, auto-discovered by a registry.
 The **engine layer** (`scheduler/engine.py`, `plans.py`, `resources.py`, `objective.py`)
 computes schedules. The **adapter layer** (`scheduler/adapters.py`) converts results into
-DataFrames with human formatting. The **presentation layer** (`app.py`) renders the dropdown
-and three views. The **validation layer** (`scheduler/validate.py`) double-checks invariants.
+DataFrames with human formatting. The **presentation layer** (`app.py` + `frontend/`)
+renders the dropdown and three views; `app.py` is a thin orchestrator (~100 lines),
+and all rendering logic lives in the `frontend/` package (`icons.py`, `styles.py`,
+`sidebar.py`, `tabs.py`). The **validation layer** (`scheduler/validate.py`) double-checks invariants.
 
 ## Dependency rule
 Lower layers never import higher ones. The engine must never import Streamlit, pandas display
