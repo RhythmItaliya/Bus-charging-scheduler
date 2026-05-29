@@ -2,7 +2,9 @@
 
 A Python + Streamlit application that schedules electric bus charging stops along the Bengaluru–A–B–C–D–Kochi corridor.  Built as a take-home assignment; deadline **June 2**.
 
-**Live app:** [https://bus-charging-scheduler.streamlit.app](https://bus-charging-scheduler.streamlit.app) *(deploy link goes here after deployment)*
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://bus-charging-scheduler-gxy2aoipfkggccvrevanu6.streamlit.app)
+
+**Live app:** [https://bus-charging-scheduler-gxy2aoipfkggccvrevanu6.streamlit.app](https://bus-charging-scheduler-gxy2aoipfkggccvrevanu6.streamlit.app)
 
 **GitHub:** [https://github.com/RhythmItaliya/Bus-charging-scheduler](https://github.com/RhythmItaliya/Bus-charging-scheduler)
 
