@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Streamlit secrets (never commit)
+.streamlit/secrets.toml
+
+# IDE / OS
+.idea/
+.vscode/
+*.DS_Store
+*.swp
+*.swo
+*~
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Jupyter (if any exploratory notebooks)
+.ipynb_checkpoints/
+
+# Assignment PDF
+ASSIGNMENT.pdf
+
+# LibreOffice / OpenDocument lock files (created while file is open, e.g. .~lock.Task_Backlog.csv#)
+.~lock.*#
+
+# Microsoft Office / Excel temporary files (e.g. ~$Task_Plan.xlsx)
+~$*
+
+# macOS resource forks
+._*
