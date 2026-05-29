@@ -5,3 +5,13 @@ backgroundColor = "#ffffff"
 secondaryBackgroundColor = "#f0f2f6"
 textColor = "#262730"
 font = "sans serif"
+
+[server]
+# Streamlit Cloud sets headless automatically — these defaults are safe
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+# Disable usage telemetry on Cloud
+gatherUsageStats = false

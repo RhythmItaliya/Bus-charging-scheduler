@@ -1,2 +1,6 @@
-streamlit>=1.32.0
-pandas>=2.0.0
+# Bus Charging Scheduler — Python dependencies
+# Pinned to the exact versions used in development.
+# PyArrow is bundled with Streamlit — no need to list it separately.
+
+streamlit==1.58.0
+pandas==2.3.3
