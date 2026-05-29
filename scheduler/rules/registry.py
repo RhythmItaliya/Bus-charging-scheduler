@@ -21,6 +21,8 @@ import math
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Literal, Optional
 
+from scheduler.logger import log
+
 
 # ---------------------------------------------------------------------------
 # ScheduleContext — the read-only bag the engine hands to each rule's evaluate()
@@ -112,6 +114,7 @@ class RuleRegistry:
         # Remove any existing rule with the same name (idempotent re-import)
         self._rules = [r for r in self._rules if r.name != rule.name]
         self._rules.append(rule)
+        log.debug(f"Rule registered", name=rule.name, kind=rule.kind)
 
     @property
     def hard_rules(self) -> List[Rule]:
@@ -138,6 +141,9 @@ _registry = RuleRegistry()
 
 def get_registry() -> RuleRegistry:
     """Return the global rule registry (populated after autodiscovery)."""
+    hard = len(_registry.hard_rules)
+    soft = len(_registry.soft_rules)
+    log.debug("Rule registry ready", hard_rules=hard, soft_rules=soft, total=hard + soft)
     return _registry
 
 

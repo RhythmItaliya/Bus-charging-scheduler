@@ -25,6 +25,7 @@ from collections import defaultdict
 from typing import List
 
 from scheduler.model import BusPlan, Scenario, ScheduleResult
+from scheduler.logger import log
 
 
 def validate(result: ScheduleResult, scenario: Scenario) -> List[str]:
@@ -49,11 +50,22 @@ def validate(result: ScheduleResult, scenario: Scenario) -> List[str]:
     world = scenario.world
     positions = scenario.route.positions
 
+    log.separator("Validation")
+    log.info("Validating schedule", buses=len(result.bus_plans), rules="H1 H2 H3 H4 R15")
+
     for bp in result.bus_plans:
         _check_bus(bp, scenario, positions, world.battery_range_km,
                    world.charge_minutes, violations)
 
     _check_charger_exclusivity(result, scenario, violations)
+
+    if violations:
+        for v in violations:
+            log.rule_check(v, status="FAIL")
+        log.warn(f"Validation complete", violations=len(violations))
+    else:
+        log.rule_check("H1 H2 H3 H4 R15 — all hard rules", status="PASS")
+        log.success("Schedule fully valid")
 
     return violations
 

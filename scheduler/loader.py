@@ -32,6 +32,7 @@ from scheduler.model import (
     Weights,
     World,
 )
+from scheduler.logger import log
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +57,7 @@ def list_scenarios(directory: str | Path) -> List[Tuple[str, Path]]:
     """
     base = Path(directory)
     if not base.exists():
+        log.error("Scenarios directory not found", path=str(base.resolve()))
         raise FileNotFoundError(f"Scenarios directory not found: {base.resolve()}")
 
     result: List[Tuple[str, Path]] = []
@@ -64,10 +66,11 @@ def list_scenarios(directory: str | Path) -> List[Tuple[str, Path]]:
             raw = json.loads(path.read_text(encoding="utf-8"))
             name = raw.get("name", path.stem)
         except (json.JSONDecodeError, OSError):
-            # Broken file: skip gracefully; the file won't appear in the dropdown.
+            log.warn("Skipping unreadable scenario file", file=path.name)
             continue
         result.append((name, path))
 
+    log.info("Scenarios discovered", count=len(result), directory=str(base))
     return result
 
 
@@ -228,7 +231,7 @@ def load_scenario(path: str | Path) -> Scenario:
             priority=priority,
         ))
 
-    return Scenario(
+    scenario = Scenario(
         name=raw.get("name", path.stem),
         world=world,
         route=route,
@@ -236,3 +239,13 @@ def load_scenario(path: str | Path) -> Scenario:
         weights=weights,
         buses=tuple(buses),
     )
+
+    log.info(
+        "Scenario loaded",
+        name=scenario.name,
+        buses=len(scenario.buses),
+        stations=len(scenario.intermediate_nodes),
+        route="→".join(scenario.route.nodes),
+        weights=f"ind={weights.individual} op={weights.operator} all={weights.overall}",
+    )
+    return scenario

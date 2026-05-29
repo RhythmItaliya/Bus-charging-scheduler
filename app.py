@@ -21,6 +21,7 @@ import streamlit as st
 
 from scheduler.engine import schedule
 from scheduler.loader import load_scenario
+from scheduler.logger import log
 from scheduler.model import ScheduleResult, Scenario, Weights
 from scheduler.validate import validate
 
@@ -64,6 +65,13 @@ def _cached_schedule(
     Returns:
         (scenario, result, violations) — violations is [] for valid schedules.
     """
+    log.separator("Scheduler run")
+    log.info(
+        "User triggered schedule",
+        scenario=scenario_path.split("/")[-1],
+        weights=f"ind={w_ind} op={w_op} all={w_all}",
+    )
+
     scenario = load_scenario(scenario_path)
     scenario = replace(
         scenario,
@@ -75,7 +83,22 @@ def _cached_schedule(
         ),
     )
     result = schedule(scenario)
-    return scenario, result, validate(result, scenario)
+    violations = validate(result, scenario)
+
+    # Log the weight application
+    log.info(
+        "Weights applied",
+        individual=w_ind,
+        operator=w_op,
+        overall=w_all,
+    )
+    # Log the full objective summary
+    log.separator("Objective breakdown")
+    for rule_name, val in result.objective_breakdown.items():
+        log.metric(rule_name, value=round(val, 2))
+    log.metric("TOTAL", value=round(result.total_objective, 2))
+
+    return scenario, result, violations
 
 
 # ── Run scheduler ─────────────────────────────────────────────────────────────
@@ -85,9 +108,11 @@ try:
         selected_path, w_individual, w_operator, w_overall
     )
 except ValueError as exc:
+    log.error(f"Scheduling error: {exc}")
     st.error(f"**Scheduling error:** {exc}")
     st.stop()
 except RuntimeError as exc:
+    log.error(f"Engine error: {exc}")
     st.error(f"**Engine error:** {exc}")
     st.stop()
 
@@ -96,6 +121,7 @@ except RuntimeError as exc:
 _IL = "icon-label"
 
 if violations:
+    log.warn("Validation banner shown", violations=len(violations))
     st.markdown(
         f'<div style="background:#f8d7da;border-left:4px solid #dc3545;'
         f'padding:.6rem 1rem;border-radius:4px;margin-bottom:.5rem">'
