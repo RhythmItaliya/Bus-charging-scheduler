@@ -87,7 +87,7 @@ def render_input_tab(
 
     with col1:
         _icon_label("bus", "Bus Roster")
-        st.dataframe(to_input_table(scenario), use_container_width=True, hide_index=True)
+        st.dataframe(to_input_table(scenario), width='stretch', hide_index=True)
 
     with col2:
         st.markdown("**World constants**")
@@ -143,7 +143,7 @@ def render_bus_tab(scenario: Scenario, result: ScheduleResult) -> None:
     )
 
     styled_df = to_bus_table(result, scenario).style.apply(_highlight_wait, axis=0)
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(styled_df, width='stretch', hide_index=True)
 
     st.divider()
 
@@ -201,4 +201,4 @@ def render_station_tab(scenario: Scenario, result: ScheduleResult) -> None:
             if stn_df.empty:
                 st.caption("No buses charged at this station in this scenario.")
             else:
-                st.dataframe(stn_df, use_container_width=True, hide_index=True)
+                st.dataframe(stn_df, width='stretch', hide_index=True)

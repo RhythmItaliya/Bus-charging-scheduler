@@ -42,6 +42,7 @@ from scheduler.physics import base_arrival_minutes
 from scheduler.plans import candidate_plans
 from scheduler.resources import ChargerPool
 from scheduler.rules.registry import ScheduleContext, get_registry
+from scheduler.logger import log
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +171,13 @@ def schedule(scenario: Scenario) -> ScheduleResult:
     """
     registry = get_registry()
 
+    log.scenario(
+        scenario.name,
+        buses=len(scenario.buses),
+        stations=len(scenario.intermediate_nodes),
+        weights=f"ind={scenario.weights.individual} op={scenario.weights.operator} all={scenario.weights.overall}",
+    )
+
     # --- Step 1: Initialise charger pools (one per station) ---
     pools: Dict[str, ChargerPool] = {
         node: ChargerPool(
@@ -287,6 +295,12 @@ def schedule(scenario: Scenario) -> ScheduleResult:
             total_wait=total_wait,
         )
         committed_plans.append(bus_plan)
+        log.debug(
+            f"Committed {bus.id}",
+            plan="→".join(best_plan),
+            wait=f"{total_wait} min",
+            arrival=f"{final_arrival} min",
+        )
 
     # --- Step 5: Assemble station_order ---
     station_order: Dict[str, List[StationSlot]] = defaultdict(list)
@@ -344,10 +358,21 @@ def schedule(scenario: Scenario) -> ScheduleResult:
     from scheduler import validate as _validate
     violations = _validate.validate(result, scenario)
     if violations:
+        for v in violations:
+            log.error(f"Validation failure: {v}")
         raise RuntimeError(
             f"Post-schedule validation failed ({len(violations)} violation(s)):\n"
             + "\n".join(f"  {v}" for v in violations)
         )
+
+    log.separator("Objective")
+    for rule_name, val in final_breakdown.items():
+        log.metric(rule_name, value=round(val, 2))
+    log.success(
+        f"Schedule complete — {len(committed_plans)} buses",
+        objective=f"{total_objective:,.1f}",
+        total_wait=f"{sum(bp.total_wait for bp in committed_plans)} min",
+    )
 
     return result
 
@@ -360,13 +385,34 @@ if __name__ == "__main__":
     import sys
     import json
     from scheduler.loader import load_scenario
+    from scheduler.validate import validate
 
     if len(sys.argv) < 2:
-        print("Usage: python -m scheduler.engine <scenario.json>")
+        log.error("Usage: python -m scheduler.engine <scenario.json>")
         sys.exit(1)
+
+    log.header("Bus Charging Scheduler — Engine Demo")
+    log.info("Loading scenario", path=sys.argv[1])
 
     _scenario = load_scenario(sys.argv[1])
     _result = schedule(_scenario)
-    print(f"Scheduled {len(_result.bus_plans)} buses. "
-          f"Total objective: {_result.total_objective:.1f}")
-    print("Objective breakdown:", _result.objective_breakdown)
+    _violations = validate(_result, _scenario)
+
+    log.separator("Station Order")
+    for node, slots in _result.station_order.items():
+        for slot in slots:
+            log.schedule(
+                slot.bus_id,
+                station=node,
+                wait=slot.wait_min,
+                start=f"{slot.start_min} min",
+                end=f"{slot.end_min} min",
+            )
+
+    log.separator("Validation")
+    if _violations:
+        for v in _violations:
+            log.rule_check(v, status="FAIL")
+    else:
+        log.rule_check("All hard rules", status="PASS")
+        log.success("Schedule is fully valid — ready for submission")

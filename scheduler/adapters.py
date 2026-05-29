@@ -109,7 +109,7 @@ def to_bus_table(result: ScheduleResult, scenario: Scenario) -> pd.DataFrame:
                 "Charge End": minutes_to_hhmm(evt.end_min),
                 "Final Arrival": minutes_to_hhmm(bp.arrival_min) if is_last else "",
                 "Charges #": len(bp.charge_events),
-                "Total Wait": bp.total_wait if is_last else "",
+                "Total Wait": bp.total_wait if is_last else None,  # None → NaN (numeric, not str)
             })
 
         # If a bus somehow has no charge events (should be caught by validator)
@@ -129,6 +129,8 @@ def to_bus_table(result: ScheduleResult, scenario: Scenario) -> pd.DataFrame:
             })
 
     df = pd.DataFrame(rows)
+    # Keep Total Wait as a pure numeric column (Int64 allows NaN without object dtype)
+    df["Total Wait"] = pd.to_numeric(df["Total Wait"], errors="coerce").astype("Int64")
     return df
 
 
