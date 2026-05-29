@@ -1,0 +1,41 @@
+{
+  "name": "Scenario 3 — Asymmetric Load",
+  "world": {
+    "speed_kmph": 60,
+    "charge_minutes": 25,
+    "battery_range_km": 240
+  },
+  "route": {
+    "nodes": ["Bengaluru", "A", "B", "C", "D", "Kochi"],
+    "segments": [
+      { "from": "Bengaluru", "to": "A", "distance_km": 100 },
+      { "from": "A",         "to": "B", "distance_km": 120 },
+      { "from": "B",         "to": "C", "distance_km": 100 },
+      { "from": "C",         "to": "D", "distance_km": 120 },
+      { "from": "D",         "to": "Kochi", "distance_km": 100 }
+    ]
+  },
+  "stations": {
+    "A": { "num_chargers": 1 },
+    "B": { "num_chargers": 1 },
+    "C": { "num_chargers": 1 },
+    "D": { "num_chargers": 1 }
+  },
+  "weights": { "individual": 1.0, "operator": 1.0, "overall": 1.0 },
+  "buses": [
+    { "id": "bus-BK-01", "operator": "kpn",      "origin": "Bengaluru", "destination": "Kochi",     "departure_min": 1140 },
+    { "id": "bus-BK-02", "operator": "freshbus", "origin": "Bengaluru", "destination": "Kochi",     "departure_min": 1155 },
+    { "id": "bus-BK-03", "operator": "flixbus",  "origin": "Bengaluru", "destination": "Kochi",     "departure_min": 1170 },
+    { "id": "bus-BK-04", "operator": "kpn",      "origin": "Bengaluru", "destination": "Kochi",     "departure_min": 1185 },
+    { "id": "bus-BK-05", "operator": "freshbus", "origin": "Bengaluru", "destination": "Kochi",     "departure_min": 1200 },
+    { "id": "bus-BK-06", "operator": "flixbus",  "origin": "Bengaluru", "destination": "Kochi",     "departure_min": 1215 },
+    { "id": "bus-BK-07", "operator": "kpn",      "origin": "Bengaluru", "destination": "Kochi",     "departure_min": 1230 },
+    { "id": "bus-BK-08", "operator": "freshbus", "origin": "Bengaluru", "destination": "Kochi",     "departure_min": 1245 },
+    { "id": "bus-BK-09", "operator": "flixbus",  "origin": "Bengaluru", "destination": "Kochi",     "departure_min": 1260 },
+    { "id": "bus-BK-10", "operator": "kpn",      "origin": "Bengaluru", "destination": "Kochi",     "departure_min": 1275 },
+    { "id": "bus-KB-01", "operator": "freshbus", "origin": "Kochi",     "destination": "Bengaluru", "departure_min": 1140 },
+    { "id": "bus-KB-02", "operator": "flixbus",  "origin": "Kochi",     "destination": "Bengaluru", "departure_min": 1175 },
+    { "id": "bus-KB-03", "operator": "kpn",      "origin": "Kochi",     "destination": "Bengaluru", "departure_min": 1210 },
+    { "id": "bus-KB-04", "operator": "freshbus", "origin": "Kochi",     "destination": "Bengaluru", "departure_min": 1245 }
+  ]
+}
