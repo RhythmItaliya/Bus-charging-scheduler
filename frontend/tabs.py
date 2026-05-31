@@ -17,7 +17,9 @@ from pathlib import Path
 import streamlit as st
 
 from scheduler.adapters import to_bus_table, to_input_table, to_station_table
+from scheduler.config import CONFIG
 from scheduler.model import Scenario, ScheduleResult
+from scheduler.rules.registry import get_registry
 from frontend.icons import icon
 
 _IL = "icon-label"  # CSS class defined in styles.inject_css()
@@ -51,15 +53,15 @@ def _icon_label(icon_name: str, label: str, small: bool = False) -> None:
 def _highlight_wait(col):
     """Pandas Styler function: colour-code the Wait (min) column.
 
-    Yellow  = 1–30 min wait.
-    Red     = > 30 min wait.
+    Yellow  = wait >= CONFIG.wait_warn_min (moderate queue).
+    Red     = wait >  CONFIG.wait_crit_min (long queue).
     """
     if col.name != "Wait (min)":
         return [""] * len(col)
     styles = []
     for val in col:
-        if isinstance(val, (int, float)) and val > 0:
-            if val > 30:
+        if isinstance(val, (int, float)) and val >= CONFIG.wait_warn_min:
+            if val > CONFIG.wait_crit_min:
                 styles.append("background-color:#f8d7da;font-weight:bold")
             else:
                 styles.append("background-color:#fff3cd;font-weight:bold")
@@ -137,9 +139,10 @@ def render_bus_tab(scenario: Scenario, result: ScheduleResult) -> None:
     """Render the Per-Bus Timetable tab: styled dataframe + four summary metrics."""
     _icon_header(3, "bus", "Per-Bus Charging Timetable")
     st.caption(
-        "Every row is one charge stop. "
-        "Yellow = wait 1–30 min · Red = wait > 30 min. "
-        "Final arrival time shown on each bus's last row."
+        f"Every row is one charge stop. "
+        f"Yellow = wait {CONFIG.wait_warn_min}–{CONFIG.wait_crit_min} min · "
+        f"Red = wait > {CONFIG.wait_crit_min} min. "
+        f"Final arrival time shown on each bus's last row."
     )
 
     styled_df = to_bus_table(result, scenario).style.apply(_highlight_wait, axis=0)
@@ -202,3 +205,198 @@ def render_station_tab(scenario: Scenario, result: ScheduleResult) -> None:
                 st.caption("No buses charged at this station in this scenario.")
             else:
                 st.dataframe(stn_df, width='stretch', hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# Tab 4 — Architecture
+# ---------------------------------------------------------------------------
+
+_SYSTEM_DIAGRAM = """\
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                       Bus Charging Scheduler — Full System Architecture                  │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+
+  PRESENTATION LAYER  (frontend/)
+  ┌──────────────────────────────────────────────────────────────────────────────────────┐
+  │  app.py  — entry point: wires UI ↔ engine, zero business logic                      │
+  │  sidebar.py  render_sidebar()  →  (path, w_ind, w_op, w_all)                        │
+  │  tabs.py     render_input_tab · render_bus_tab · render_station_tab · render_arch_tab│
+  │  styles.py   inject_css()        icons.py  icon()                                   │
+  └────────────────────────────────────┬─────────────────────────────────────────────────┘
+                                       │ calls
+  ADAPTER LAYER  (scheduler/adapters.py)
+  ┌──────────────────────────────────────────────────────────────────────────────────────┐
+  │  to_input_table(scenario)    →  bus roster DataFrame                                 │
+  │  to_bus_table(result, scen)  →  per-bus charging timetable DataFrame                │
+  │  to_station_table(result, n) →  per-station charge-order DataFrame                  │
+  │  Only layer that knows about pandas & HH:MM time formatting                          │
+  └────────────────────────────────────┬─────────────────────────────────────────────────┘
+                                       │ reads
+  SCHEDULING LAYER  (scheduler/)
+  ┌──────────────────────────────────────────────────────────────────────────────────────┐
+  │  engine.py        schedule(scenario) → ScheduleResult                               │
+  │    ├─ plans.py    candidate_plans()  →  range-feasible station subsets              │
+  │    ├─ resources.py  ChargerPool  reserve() / snapshot() / restore()                 │
+  │    └─ objective.py  score(ctx, registry)  →  (feasible, cost, breakdown)            │
+  │                                                                                      │
+  │  rules/  ──  pluggable rule registry  (@register → autodiscovered)                 │
+  │    hard_rules.py  H1 RangeRule · H2 RouteOrderRule · H4 ChargeDurationRule          │
+  │    soft_rules.py  S1 IndividualWaitRule · S2 OperatorRule · S3 OverallRule          │
+  │    registry.py    RuleRegistry · get_registry() · @register decorator               │
+  │    [new rule]     drop a file + @register → engine picks it up automatically        │
+  │                                                                                      │
+  │  loader.py    list_scenarios() · load_scenario()  →  Scenario  (3-stage validation) │
+  │  validate.py  validate(result, scenario)  →  violations list  (H1–H4, R15)         │
+  │  model.py     Scenario · World · Route · Bus · Weights · BusPlan · ChargeEvent     │
+  │  physics.py   travel_minutes() · base_arrival_minutes() · minutes_to_hhmm()        │
+  │  config.py    DEFAULTS · SCENARIOS_DIR                                              │
+  └────────────────────────────────────┬─────────────────────────────────────────────────┘
+                                       │ reads JSON
+  DATA LAYER  (data/scenarios/)
+  ┌──────────────────────────────────────────────────────────────────────────────────────┐
+  │  scenario_1.json  Even Spacing      (20 buses, w=1,1,1)                             │
+  │  scenario_2.json  Bunched Start     (20 buses, w=1,1,1)                             │
+  │  scenario_3.json  Asymmetric Load   (14 buses, w=1,1,1)                             │
+  │  scenario_4.json  Operator-Heavy    (20 buses, w=1,2,1)  ← operator weight = 2     │
+  │  scenario_5.json  Worst-Case Conv.  (20 buses, w=1,1,1)                             │
+  │                                                                                      │
+  │  Schema: { name, world, route{nodes,segments}, stations, weights, buses[] }         │
+  └──────────────────────────────────────────────────────────────────────────────────────┘
+
+  LAYER RULE: app.py → frontend/ → adapters → engine/validate/model
+              Lower layers NEVER import higher ones.
+              scheduler/* has ZERO Streamlit imports — fully headless & testable."""
+
+_DATA_FLOW = """\
+  User selects scenario + adjusts weights
+           │
+           ▼
+  sidebar.py → render_sidebar() → (path, w_ind, w_op, w_all)
+           │
+           ▼
+  app.py → _cached_schedule(path, w_ind, w_op, w_all)   [st.cache_data]
+           │
+           ├─► loader.load_scenario(path)  →  Scenario
+           │       parse JSON → validate fields → compute route positions map
+           │
+           ├─► engine.schedule(scenario)   →  ScheduleResult
+           │       1. Init ChargerPool per station
+           │       2. Sort buses: priority DESC → departure_min ASC → id ASC
+           │       3. For each bus:
+           │            enumerate candidate_plans()
+           │            for each plan: _simulate_plan() → score() → rollback
+           │            commit lowest-cost feasible plan (permanently reserves slots)
+           │       4. Assemble station_order (sorted by start_min)
+           │       5. Post-validate (defence in depth)
+           │
+           ├─► validate.validate(result, scenario)  →  violations list
+           │
+           └─► (scenario, result, violations)
+                         │
+                         ▼
+  tabs.py → adapters.to_*_table()  →  DataFrames rendered in Streamlit"""
+
+_VALID_PLANS_NOTE = """\
+  Route: Bengaluru(0) → A(100) → B(220) → C(320) → D(440) → Kochi(540 km)
+  Battery range: 240 km.  Any leg > 240 km is infeasible.
+
+  BK buses (Bengaluru → Kochi) — valid 2-charge plans:
+    {A, C}  legs: 100 · 220 · 220 ✓   ← A→D = 340 km ✗ so {A,D} is invalid
+    {B, C}  legs: 220 · 100 · 220 ✓
+    {B, D}  legs: 220 · 220 · 100 ✓
+
+  KB buses (Kochi → Bengaluru) — valid 2-charge plans:
+    {D, C}  legs: 100 · 120 · 320 ... wait: D→Bengaluru=440>240 via C→A→Bng
+            Actually C→A=220, A→Bengaluru=100 ✓  legs: 100·120·220·100 ✓
+    {D, B}  legs: 100 · 220 · 220 ✓
+    {C, B}  legs: 220 · 100 · 220 ✓
+    {C, A}  legs: 220 · 220 · 100 ✓"""
+
+
+def render_architecture_tab(scenario: Scenario, result: ScheduleResult) -> None:
+    """Render the Architecture tab: full system diagram, data flow, and rule registry."""
+    _icon_header(3, "settings", "System Architecture")
+    st.caption("Full system structure, data flow, scheduling algorithm, and rule registry.")
+
+    # ── Full system diagram ───────────────────────────────────────────────────
+    with st.expander("Full system diagram", expanded=True):
+        st.code(_SYSTEM_DIAGRAM, language=None)
+
+    # ── Data flow ─────────────────────────────────────────────────────────────
+    with st.expander("Data flow (one scheduling run)", expanded=False):
+        st.code(_DATA_FLOW, language=None)
+
+    # ── Valid charging plans ──────────────────────────────────────────────────
+    with st.expander("Valid charging plans (range analysis)", expanded=False):
+        st.code(_VALID_PLANS_NOTE, language=None)
+
+    # ── Live rule registry ────────────────────────────────────────────────────
+    with st.expander("Live rule registry", expanded=False):
+        registry = get_registry()
+        st.markdown("**Hard rules** (feasibility gates — return `math.inf` on violation):")
+        for rule in registry.hard_rules:
+            st.markdown(f"- `{rule.name}`")
+        st.markdown("**Soft rules** (weighted penalty functions):")
+        for rule in registry.soft_rules:
+            weight_key = getattr(rule, "weight_key", "—")
+            st.markdown(f"- `{rule.name}` &nbsp; weight key: `{weight_key}`")
+        st.caption(
+            "Add a new rule by dropping a file in `scheduler/rules/` with `@register`. "
+            "No engine edits needed — autodiscovery picks it up automatically."
+        )
+
+    # ── Current scenario data model ───────────────────────────────────────────
+    with st.expander("Current scenario data model", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**World constants**")
+            st.json({
+                "speed_kmph": scenario.world.speed_kmph,
+                "charge_minutes": scenario.world.charge_minutes,
+                "battery_range_km": scenario.world.battery_range_km,
+            })
+            st.markdown("**Weights**")
+            st.json({
+                "individual": scenario.weights.individual,
+                "operator": scenario.weights.operator,
+                "overall": scenario.weights.overall,
+                **({"extra": scenario.weights.extra} if scenario.weights.extra else {}),
+            })
+        with col2:
+            st.markdown("**Route nodes**")
+            st.json(list(scenario.route.nodes))
+            st.markdown("**Stations**")
+            st.json({
+                node: {"num_chargers": stn.num_chargers}
+                for node, stn in sorted(scenario.stations.items())
+            })
+
+    # ── Objective breakdown ───────────────────────────────────────────────────
+    with st.expander("Objective breakdown (current schedule)", expanded=False):
+        st.caption("Lower is better. All hard-rule violations are caught before this stage.")
+        for rule_name, val in result.objective_breakdown.items():
+            st.metric(label=rule_name, value=round(val, 2))
+        st.metric(label="TOTAL", value=round(result.total_objective, 2))
+
+    # ── Anticipated changes ───────────────────────────────────────────────────
+    with st.expander("Anticipated changes — handled by data alone", expanded=False):
+        import pandas as pd
+        changes = [
+            ("Add a station",             "Edit route.nodes, route.segments, stations{}",    "Data only"),
+            ("Change segment distance",   "Edit route.segments[i].distance_km",              "Data only"),
+            ("Add chargers at station",   "Set stations[node].num_chargers = N",             "Data only"),
+            ("Add a new operator",        "Add buses with operator='new_name'",              "Data only"),
+            ("Add buses",                 "Append to buses[]",                               "Data only"),
+            ("Priority buses",            "Set bus.priority > 0; engine sorts DESC",         "Data only"),
+            ("Per-bus range",             "Set bus.range_km per vehicle",                    "Data only"),
+            ("New soft objective",        "New Rule file + weight key in JSON",              "Data + 1 file"),
+            ("New hard rule",             "New Rule file with @register",                    "1 file only"),
+            ("Change travel speed",       "Set world.speed_kmph",                            "Data only"),
+            ("Change charge duration",    "Set world.charge_minutes",                        "Data only"),
+            ("100+ buses",                "Engine is O(buses×plans×stations); linear",       "No change"),
+            ("Swap solver to CP-SAT",     "Implement CpSatStrategy behind Strategy ABC",    "No engine edit"),
+        ]
+        st.dataframe(
+            pd.DataFrame(changes, columns=["Change", "How absorbed", "Type"]),
+            width="stretch", hide_index=True,
+        )
