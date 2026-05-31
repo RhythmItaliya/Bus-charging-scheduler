@@ -4,6 +4,209 @@ This document covers the framework choice, data model, anticipated-change table,
 
 ---
 
+## 0. Full System Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                       Bus Charging Scheduler — Full System Architecture                  │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+
+  BROWSER / USER
+  ┌────────────────────────────────────────────────────────────────────────────────────┐
+  │  Streamlit UI (http://localhost:8501)                                              │
+  │                                                                                    │
+  │  Sidebar                        Main area (3 tabs + Architecture tab)             │
+  │  ┌──────────────────────┐       ┌────────────┬────────────┬──────────┬──────────┐ │
+  │  │ Scenario dropdown    │       │   Input    │ Per-Bus    │Per-Stn   │  Arch.   │ │
+  │  │ Weight sliders       │       │   Tab      │ Timetable  │Order     │  Tab     │ │
+  │  │  ├ Individual Wait   │       │            │   Tab      │  Tab     │          │ │
+  │  │  ├ Operator Fairness │       └────────────┴────────────┴──────────┴──────────┘ │
+  │  │  └ Overall Makespan  │                                                          │
+  │  │ Reset weights button │                                                          │
+  │  └──────────────────────┘                                                          │
+  └───────────────────────────────────┬────────────────────────────────────────────────┘
+                                      │  Python in-process (no HTTP boundary)
+  ════════════════════════════════════╪════════════════════════════════════════════════
+  PRESENTATION LAYER (frontend/)     │
+  ┌──────────────────────────────────▼──────────────────────────────────────────────┐
+  │  app.py  (entry point — wires UI ↔ engine; zero business logic)                  │
+  │                                                                                   │
+  │  ┌─────────────────┐  ┌──────────────────────────────────────┐  ┌────────────┐  │
+  │  │  sidebar.py     │  │  tabs.py                             │  │ styles.py  │  │
+  │  │  render_sidebar │  │  render_input_tab()                  │  │ icons.py   │  │
+  │  │  → returns      │  │  render_bus_tab()                    │  │ inject_css │  │
+  │  │    (path,       │  │  render_station_tab()                │  │ icon()     │  │
+  │  │     w_ind,      │  │  render_architecture_tab()           │  └────────────┘  │
+  │  │     w_op,       │  └──────────────────────────────────────┘                  │
+  │  │     w_all)      │                                                              │
+  │  └─────────────────┘                                                              │
+  └─────────────────────────────────────────────────────────────────────────────────┘
+                         │ calls to_*_table()           ▲ returns DataFrames
+  ════════════════════════╪══════════════════════════════╪═════════════════════════════
+  ADAPTER LAYER           │                              │
+  ┌───────────────────────▼──────────────────────────────┴──────────────────────────┐
+  │  scheduler/adapters.py  (only layer that knows about pandas & HH:MM formatting)  │
+  │  to_input_table(scenario)   →  bus roster DataFrame                               │
+  │  to_bus_table(result, scen) →  per-bus charging timetable DataFrame              │
+  │  to_station_table(result, n)→  per-station charge-order DataFrame               │
+  └──────────────────────────────────────┬──────────────────────────────────────────┘
+                                         │ reads model objects
+  ════════════════════════════════════════╪═════════════════════════════════════════════
+  SCHEDULING LAYER (scheduler/)          │
+  ┌──────────────────────────────────────▼─────────────────────────────────────────────┐
+  │                                                                                     │
+  │  ┌──────────────────────────────────────────────────────────────────────────┐      │
+  │  │  engine.py  — deterministic event-driven greedy scheduler                │      │
+  │  │                                                                          │      │
+  │  │  schedule(scenario) → ScheduleResult                                    │      │
+  │  │                                                                          │      │
+  │  │  Step 1: Init ChargerPool per station                                   │      │
+  │  │  Step 2: Sort buses (priority DESC → departure ASC → id ASC)            │      │
+  │  │  Step 3: For each bus:                                                  │      │
+  │  │            enumerate candidate_plans()                                  │      │
+  │  │            for each plan: _simulate_plan() → score() → rollback         │      │
+  │  │            commit lowest-cost feasible plan                             │      │
+  │  │  Step 4: Assemble station_order                                         │      │
+  │  │  Step 5: Post-validate (defence in depth)                               │      │
+  │  └──────────────────────────────────────────────────────────────────────────┘      │
+  │           │ uses                    │ uses                    │ uses               │
+  │           ▼                         ▼                          ▼                   │
+  │  ┌──────────────┐  ┌──────────────────────┐  ┌───────────────────────────────┐   │
+  │  │  plans.py    │  │  resources.py        │  │  objective.py                 │   │
+  │  │  downstream  │  │  ChargerPool         │  │  score(ctx, registry)         │   │
+  │  │  _stations() │  │  reserve(arrive_min) │  │  → (feasible, total, bkdown)  │   │
+  │  │  candidate_  │  │  snapshot() /        │  │                               │   │
+  │  │  plans()     │  │  restore()           │  │  iterates hard rules first,   │   │
+  │  └──────────────┘  └──────────────────────┘  │  then soft rules              │   │
+  │                                               └───────────────────────────────┘   │
+  │                                                          │ delegates to            │
+  │  ┌────────────────────────────────────────────────────────▼──────────────────┐    │
+  │  │  scheduler/rules/  — pluggable rule registry                              │    │
+  │  │                                                                            │    │
+  │  │  ┌───────────────────────────┐    ┌──────────────────────────────────┐   │    │
+  │  │  │  hard_rules.py            │    │  soft_rules.py                   │   │    │
+  │  │  │  H1 RangeRule             │    │  S1 IndividualWaitRule           │   │    │
+  │  │  │    → 0.0 | math.inf       │    │  S2 OperatorRule                 │   │    │
+  │  │  │  H2 RouteOrderRule        │    │  S3 OverallRule                  │   │    │
+  │  │  │    → 0.0 | math.inf       │    │    each returns weight * penalty │   │    │
+  │  │  │  H4 ChargeDurationRule    │    └──────────────────────────────────┘   │    │
+  │  │  │    → 0.0 | math.inf       │                                           │    │
+  │  │  └───────────────────────────┘    ┌──────────────────────────────────┐   │    │
+  │  │                                   │  registry.py                     │   │    │
+  │  │  NEW RULE = new file + @register  │  @register decorator             │   │    │
+  │  │  No engine edits ever needed ──►  │  get_registry() singleton        │   │    │
+  │  │                                   │  _discover.py autodiscovery      │   │    │
+  │  │                                   └──────────────────────────────────┘   │    │
+  │  └────────────────────────────────────────────────────────────────────────────┘    │
+  │                                                                                     │
+  │  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  ┌──────────┐                │
+  │  │  loader.py   │  │  validate.py │  │  model.py  │  │ config.py│                │
+  │  │  list_scen() │  │  validate()  │  │  Scenario  │  │ DEFAULTS │                │
+  │  │  load_scen() │  │  H1/H2/H3/H4│  │  World     │  │ SCENARIOS│                │
+  │  │  3-stage     │  │  R15 checks  │  │  Route     │  │  _DIR    │                │
+  │  │  validation  │  │              │  │  Bus       │  └──────────┘                │
+  │  └──────────────┘  └──────────────┘  │  Weights   │                             │
+  │                                       │  BusPlan   │                             │
+  │                                       │  ChargeEvt │                             │
+  │                                       │  StationSlt│                             │
+  │                                       └────────────┘                             │
+  └─────────────────────────────────────────────────────────────────────────────────────┘
+                                         │ reads JSON
+  ════════════════════════════════════════╪═════════════════════════════════════════════
+  DATA LAYER                             │
+  ┌──────────────────────────────────────▼─────────────────────────────────────────────┐
+  │  data/scenarios/                                                                    │
+  │                                                                                     │
+  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────┐│
+  │  │ scenario_1   │ │ scenario_2   │ │ scenario_3   │ │ scenario_4   │ │scenario_5││
+  │  │ Even Spacing │ │ Bunched Start│ │ Asymmetric   │ │ Op-Heavy KPN │ │Worst-Case││
+  │  │ 20 buses     │ │ 20 buses     │ │ 14 buses     │ │ 20 buses     │ │20 buses  ││
+  │  │ w=1,1,1      │ │ w=1,1,1      │ │ w=1,1,1      │ │ w=1,2,1      │ │w=1,1,1   ││
+  │  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘ └──────────┘│
+  │                                                                                     │
+  │  JSON schema (each file):                                                           │
+  │  { name, world{speed_kmph,charge_minutes,battery_range_km},                        │
+  │    route{nodes[],segments[]}, stations{node:{num_chargers}},                       │
+  │    weights{individual,operator,overall,extra{}},                                   │
+  │    buses[{id,operator,origin,destination,departure_min,range_km,priority}] }       │
+  └─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Data flow (one scheduling run)
+
+```
+  User picks scenario + sets weights
+          │
+          ▼
+  sidebar.py → render_sidebar() → (path, w_ind, w_op, w_all)
+          │
+          ▼
+  app.py → _cached_schedule(path, w_ind, w_op, w_all)   [st.cache_data]
+          │
+          ├─► loader.load_scenario(path)  →  Scenario  (immutable dataclass)
+          │        JSON parse → validate fields → hydrate positions map
+          │
+          ├─► engine.schedule(scenario)  →  ScheduleResult
+          │        init ChargerPools
+          │        sort buses (priority, departure, id)
+          │        for each bus:
+          │            candidate_plans() → range-feasible subsets of stations
+          │            for each plan:
+          │                _simulate_plan()  →  provisional ChargeEvents
+          │                objective.score() →  (feasible, cost, breakdown)
+          │                    rules/hard_rules: RangeRule, RouteOrderRule, ChargeDurationRule
+          │                    rules/soft_rules: IndividualWaitRule, OperatorRule, OverallRule
+          │                rollback ChargerPool snapshots
+          │            commit best feasible plan  →  permanently reserve charger slots
+          │        assemble station_order (sorted by start_min)
+          │        post-validate (defence in depth)
+          │
+          ├─► validate.validate(result, scenario)  →  violations list
+          │
+          └─► return (scenario, result, violations)
+                    │
+                    ▼
+          tabs.py → to_*_table() via adapters.py  →  DataFrames for display
+```
+
+### Scheduling algorithm decision tree (per bus)
+
+```
+  Bus arrives for scheduling
+          │
+          ▼
+  downstream_stations(bus) → [A, B, C, D] in travel order
+          │
+          ▼
+  candidate_plans() → enumerate all range-feasible subsets
+  e.g. BK buses: {A,C}, {B,C}, {B,D}   ← {A,D} fails: 340km > 240km range
+       KB buses: {D,C}, {D,B}, {C,B}, {C,A}
+          │
+          ▼
+  for each candidate plan:
+    │
+    ├── snapshot all ChargerPool states
+    │
+    ├── _simulate_plan() → walk bus through stations:
+    │     for each station in plan:
+    │       arrive_min = prev_end + travel_time(dist, speed)
+    │       (start, wait, charger_idx) = pool.reserve(arrive_min)
+    │       end = start + charge_minutes
+    │
+    ├── objective.score(ctx, registry):
+    │     hard rules → any math.inf? → INFEASIBLE, skip
+    │     soft rules → sum weighted penalties → total cost
+    │
+    └── restore all ChargerPool snapshots (rollback tentative reservation)
+          │
+          ▼
+  commit lowest-cost feasible plan:
+    re-simulate (permanently reserves charger slots)
+    append BusPlan to committed list
+```
+
+---
+
 ## 1. Framework choice and why
 
 **Python + Streamlit, single process.**
@@ -34,6 +237,8 @@ class CpSatStrategy:           # future (if instance scale grows)
 ```
 
 Rules, data model, and UI are unchanged by this swap.
+
+**Note on weight sensitivity:** The greedy algorithm finds the locally-optimal plan for each bus given already-committed buses.  When physical constraints dominate (e.g., all BK buses must queue at station A because station B is occupied by KB buses), the schedule is effectively forced regardless of soft-objective weights.  The weights still change the `total_objective` value and influence plan selection when genuinely equivalent alternatives exist.  A CP-SAT solver could find globally-optimal solutions that better exploit weight trade-offs, at the cost of the extensibility properties above.
 
 ---
 
@@ -189,14 +394,15 @@ All assumptions are explicitly documented here per R42.
 
 ```
 app.py (Streamlit UI)
-  └── scheduler/adapters.py (formatting only)
-        └── scheduler/engine.py + validate.py + model.py
-              └── scheduler/rules/* (pure functions of schedule context)
-              └── scheduler/resources.py (ChargerPool)
-              └── scheduler/plans.py (plan enumeration)
-              └── scheduler/physics.py (travel arithmetic)
-              └── scheduler/model.py (dataclasses)
-              └── scheduler/config.py (defaults)
+  └── frontend/ (sidebar, tabs, styles, icons)
+        └── scheduler/adapters.py (formatting only — only pandas user)
+              └── scheduler/engine.py + validate.py + model.py
+                    └── scheduler/rules/* (pure functions of schedule context)
+                    └── scheduler/resources.py (ChargerPool)
+                    └── scheduler/plans.py (plan enumeration)
+                    └── scheduler/physics.py (travel arithmetic)
+                    └── scheduler/model.py (dataclasses)
+                    └── scheduler/config.py (defaults)
 
 Lower layers NEVER import higher ones.
 scheduler/* contains ZERO Streamlit imports.
