@@ -17,9 +17,8 @@ References:
 
 from __future__ import annotations
 
-import math
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from scheduler.logger import log
 
@@ -114,7 +113,7 @@ class RuleRegistry:
         # Remove any existing rule with the same name (idempotent re-import)
         self._rules = [r for r in self._rules if r.name != rule.name]
         self._rules.append(rule)
-        log.debug(f"Rule registered", name=rule.name, kind=rule.kind)
+        log.debug("Rule registered", name=rule.name, kind=rule.kind)
 
     @property
     def hard_rules(self) -> List[Rule]:

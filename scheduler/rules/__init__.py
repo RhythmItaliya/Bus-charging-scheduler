@@ -15,9 +15,13 @@ References:
     docs/02-scheduler-engine/05-rule-framework.md  (autodiscovery spec)
 """
 
-from scheduler.rules.registry import RuleRegistry, register, get_registry  # noqa: F401
+import importlib
 
-# Trigger auto-discovery AFTER registry is defined (avoids circular imports)
-from scheduler.rules import _discover  # noqa: F401
+from scheduler.rules.registry import RuleRegistry, get_registry, register  # noqa: F401
+
+# Trigger autodiscovery: importing _discover runs pkgutil.iter_modules which
+# imports every rule module so their @register decorators fire.
+# importlib.import_module avoids a "imported but unused" pyflakes false positive.
+importlib.import_module("scheduler.rules._discover")
 
 __all__ = ["RuleRegistry", "register", "get_registry"]

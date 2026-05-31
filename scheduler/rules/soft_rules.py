@@ -1,19 +1,39 @@
 """
-scheduler/rules/soft_rules.py — Soft objective rules (penalty functions).
+scheduler/rules/soft_rules.py  —  Soft objective rules (the things we want to minimise).
 
-Three soft rules implement the weighted optimization objectives:
-  S1 — IndividualWaitRule : penalise individual bus wait time.
-  S2 — OperatorRule       : penalise uneven wait distribution within each operator fleet.
-  S3 — OverallRule        : penalise network makespan.
+WHAT ARE SOFT RULES?
+  Soft rules are preferences — they make the schedule better but don't make
+  it illegal if violated. The scheduler tries to find the plan with the
+  lowest total soft-rule penalty.
 
-Each rule returns a penalty that is already multiplied by its weight (read from
-ctx.weights by key).  The engine never hardcodes a weight value anywhere.
+  Each soft rule returns:  weight × penalty
+  The engine picks the plan with the LOWEST total across all soft rules.
 
-Exact metric definitions: docs/02-scheduler-engine/03-optimization-rules.md
-References:
-    docs/00-requirements/02-constraints-and-rules.md  (S1–S3, tunability R23)
-    docs/02-scheduler-engine/03-optimization-rules.md (pinned formulas)
-    docs/07-testing/01-testing-plan.md                (test_rules.py, test_weights.py)
+PDF reference: Page 4, "What to optimize for"
+  "When the scheduler has flexibility (which stations to use, who charges first),
+   it should weigh three soft rules:"
+
+  S1 — Individual bus: "no single bus should wait too long"
+       → IndividualWaitRule
+  S2 — Operator: "each operator's fleet should run smoothly as a group"
+       → OperatorRule
+  S3 — Overall: "total time across the whole network should be low"
+       → OverallRule
+
+  "These weights should be TUNABLE — engineers will change them as we learn
+   what matters operationally. DON'T HARDCODE THEM." (PDF page 4, emphasis theirs)
+
+HOW WEIGHTS WORK:
+  Each soft rule reads its weight from the scenario JSON via ctx.weights.get(key).
+  The penalty is then:  weight × raw_metric.
+  If weight = 0.0, this rule has no influence on the schedule.
+  If weight = 5.0, this rule is 5× more important than a weight-1 rule.
+
+INTERVIEW TALKING POINT:
+  "The PDF specifically says 'don't hardcode weights'. So every weight lives
+   in the scenario JSON file. In the UI, you can drag the sliders to change
+   weights in real time without touching any code.
+   Scenario 4 sets operator weight = 2.0 to show operator fairness matters more."
 """
 
 from __future__ import annotations
@@ -24,59 +44,94 @@ from typing import Dict, List
 from scheduler.rules.registry import Rule, ScheduleContext, register
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# S1 — Individual Wait Rule
+# PDF reference: Page 4 — "Individual bus — no single bus should wait too long"
+# ─────────────────────────────────────────────────────────────────────────────
+
 @register
 class IndividualWaitRule(Rule):
     """
-    S1 — Individual wait penalty.
+    Soft rule S1: Penalise long waiting times for individual buses.
 
-    Default metric: w_ind · Σ_b wait(b) — sum of all charger-queue minutes across
-    the full committed schedule plus the candidate bus's wait.  Directly penalises
-    queueing so no single bus parks at a charger too long.
+    WHAT IT MEASURES:
+      Total minutes all buses have spent waiting in charger queues.
+      Lower = better (buses spend less time just sitting in a queue).
 
-    Weight key: "individual".
+    FORMULA:
+      penalty = weight_individual × Σ(wait_min for every bus)
 
-    Documented alternative (toggle in code): w_ind · max_b wait(b) to target the
-    worst-case bus specifically.  Default is sum.
+    HOW IT WORKS:
+      1. Add up the total_wait of all already-committed buses.
+      2. Add the candidate bus's wait from its provisional charge events.
+      3. Multiply by the "individual" weight from the scenario.
 
-    Ref: docs/02-scheduler-engine/03-optimization-rules.md §IndividualWaitRule
+    WHY CUMULATIVE (not just this bus)?
+      We evaluate each plan in the context of all committed buses.
+      A plan that adds more total waiting to the system is worse,
+      even if the current bus itself waits less.
+
+    PDF reference: Page 4 — "Individual bus — no single bus should wait too long"
+    Weight key: "individual"  (default 1.0)
+
+    Example: Scenario 1 with all weights = 1.0
+      Total wait across all 20 buses = 900 minutes
+      IndividualWaitRule penalty = 1.0 × 900 = 900.0
     """
 
     name = "IndividualWaitRule"
     kind = "soft"
-    weight_key = "individual"
+    weight_key = "individual"  # matches the key in scenario JSON and UI slider
 
     def evaluate(self, ctx: ScheduleContext) -> float:
-        """Return weighted sum of all bus wait times including the candidate bus."""
-        weight = ctx.weights.get(self.weight_key)
+        weight = ctx.weights.get(self.weight_key)  # 1.0 default, read from scenario JSON
 
-        # Sum wait from previously committed buses
-        committed_wait = sum(
-            plan.total_wait for plan in ctx.all_committed
-        )
+        # Sum up waits from all buses that have already been scheduled
+        committed_wait = sum(plan.total_wait for plan in ctx.all_committed)
 
-        # Add candidate bus's wait from its provisional charge events
+        # Add this candidate bus's wait (from provisional charge events)
         candidate_wait = sum(e["wait_min"] for e in ctx.charge_events)
 
         total_wait = committed_wait + candidate_wait
-        return weight * total_wait
+        return weight * total_wait  # higher weight → more penalty for waiting
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S2 — Operator Rule
+# PDF reference: Page 4 — "Operator — each operator's fleet should run smoothly"
+# ─────────────────────────────────────────────────────────────────────────────
 
 @register
 class OperatorRule(Rule):
     """
-    S2 — Operator fairness penalty.
+    Soft rule S2: Penalise unfair treatment within an operator's fleet.
 
-    Default metric: w_op · Σ_g Var_{b∈g}(wait(b)) — sum across operators of the
-    within-fleet variance of per-bus wait.  Variance penalises *uneven* treatment
-    inside an operator's fleet, which is exactly what "each operator's fleet runs
-    smoothly as a group" means (R21).  This is also what makes Scenario 4 reshuffle
-    visibly when operator weight changes (R28/R44).
+    WHAT IT MEASURES:
+      Within each operator (KPN, Freshbus, Flixbus), how unequal are the
+      waiting times between that operator's buses?
+      We use statistical VARIANCE to measure this inequality.
 
-    Weight key: "operator".
+    WHY VARIANCE (not average)?
+      Variance measures how SPREAD OUT the waits are.
+      If KPN's buses wait [0, 0, 0, 90] minutes, the average is 22.5
+      but the variance is HUGE — one bus waited 90 min while others waited 0.
+      This is unfair. High variance = unfair treatment.
+      Low variance = all buses in the fleet experience similar delays.
 
-    Documented alternative: Σ_g Σ_{b∈g} wait(b) (total fleet wait, not variance).
+    FORMULA:
+      For each operator fleet, compute variance of wait times.
+      penalty = weight_operator × Σ(variance per fleet)
 
-    Ref: docs/02-scheduler-engine/03-optimization-rules.md §OperatorRule
+    WHEN DOES THIS MATTER?
+      Scenario 4 has 8 KPN buses in BK direction.
+      They all queue at station A and accumulate different wait times.
+      With high operator weight, the scheduler tries harder to
+      equalise wait times within the KPN fleet.
+
+    PDF reference: Page 4 — "Operator — each operator's fleet should run smoothly as a group"
+                   Scenario 4 description — "operator weight = 2.0 should produce
+                   visibly different schedules"
+    Weight key: "operator"  (default 1.0; Scenario 4 uses 2.0)
     """
 
     name = "OperatorRule"
@@ -84,46 +139,67 @@ class OperatorRule(Rule):
     weight_key = "operator"
 
     def evaluate(self, ctx: ScheduleContext) -> float:
-        """Return weighted sum of per-operator within-fleet wait variance."""
         weight = ctx.weights.get(self.weight_key)
 
-        # Build operator→[wait] map from committed buses + candidate bus
+        # Build a dict: operator_name → [wait_min for each of that operator's buses]
         op_waits: Dict[str, List[int]] = {}
 
+        # Start with all already-committed buses
         for plan in ctx.all_committed:
             op_waits.setdefault(plan.operator, []).append(plan.total_wait)
 
-        # Add the candidate bus
+        # Add this candidate bus to its operator's wait list
         candidate_bus = next(b for b in ctx.scenario.buses if b.id == ctx.bus_id)
         candidate_wait = sum(e["wait_min"] for e in ctx.charge_events)
         op_waits.setdefault(candidate_bus.operator, []).append(candidate_wait)
 
-        # Compute variance per operator (0 for single-bus fleets)
+        # Compute variance for each operator fleet
+        # Variance = 0 if only 1 bus in fleet (no comparison to make)
+        # Variance > 0 if buses have different wait times (unfair)
         total_variance = 0.0
         for waits in op_waits.values():
             if len(waits) > 1:
                 total_variance += statistics.variance(waits)
-            # Single-bus fleet: variance = 0, no contribution
 
-        return weight * total_variance
+        return weight * total_variance  # higher weight → more penalty for uneven waits
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S3 — Overall Rule
+# PDF reference: Page 4 — "Overall — total time across the whole network should be low"
+# ─────────────────────────────────────────────────────────────────────────────
 
 @register
 class OverallRule(Rule):
     """
-    S3 — Overall network time penalty.
+    Soft rule S3: Penalise long total operation time across the whole network.
 
-    Default metric: w_all · makespan, where:
-      makespan = max_b arrival(b) − min_b t0(b)
+    WHAT IT MEASURES:
+      Makespan = latest arrival time of any bus − earliest departure time of any bus.
+      This is how long the whole operation takes from start to finish.
+      Lower makespan = the network is more efficient.
 
-    Penalises the total clock spread of the operation — compressing makespan
-    means the whole fleet finishes sooner.
+    WHY MAKESPAN?
+      If some buses arrive very late (because they waited a long time in queues),
+      the total operation window is stretched out. Makespan captures this.
+      An efficient schedule gets all buses to their destination quickly.
 
-    Weight key: "overall".
+    FORMULA:
+      makespan = max(all arrival times) − min(all departure times)
+      penalty  = weight_overall × makespan
 
-    Documented alternative: Σ_b (arrival(b) − t0(b)) (total person-time).
+    ALTERNATIVE (not used, documented for transparency):
+      Some schedulers use "total person-time" = Σ(arrival − departure per bus).
+      We chose makespan because it directly measures the operation window.
 
-    Ref: docs/02-scheduler-engine/03-optimization-rules.md §OverallRule
+    PDF reference: Page 4 — "Overall — total time across the whole network should be low"
+    Weight key: "overall"  (default 1.0)
+
+    Example: Scenario 1
+      Min departure: 19:00 (1140 min)
+      Max arrival:   ~03:15 next day (~1955 min)
+      Makespan: 1955 - 1140 = 815 min
+      OverallRule penalty: 1.0 × 815 = 815.0
     """
 
     name = "OverallRule"
@@ -131,28 +207,29 @@ class OverallRule(Rule):
     weight_key = "overall"
 
     def evaluate(self, ctx: ScheduleContext) -> float:
-        """Return weighted makespan across committed + candidate bus."""
         weight = ctx.weights.get(self.weight_key)
 
-        # Gather all departure and arrival times
+        # Collect all departure times (these are fixed — buses leave when scheduled)
         departures = [b.departure_min for b in ctx.scenario.buses]
+
+        # Collect arrivals from already-committed buses
         arrivals = [plan.arrival_min for plan in ctx.all_committed]
 
-        # Add the candidate bus's arrival from its provisional events + physics
+        # Estimate this candidate bus's arrival:
+        # last charge end + travel time from last station to destination
         bus = next(b for b in ctx.scenario.buses if b.id == ctx.bus_id)
         positions = ctx.scenario.route.positions
         speed = ctx.scenario.world.speed_kmph
 
-        # The candidate bus's arrival = end of last charge + travel to destination
         if ctx.charge_events:
             last_event = ctx.charge_events[-1]
             last_end = last_event["end_min"]
             last_station = last_event["station"]
             dist_to_dest = abs(positions[bus.destination] - positions[last_station])
-            travel = (dist_to_dest / speed) * 60.0
-            candidate_arrival = int(last_end + travel)
+            travel_to_dest = (dist_to_dest / speed) * 60.0
+            candidate_arrival = int(last_end + travel_to_dest)
         else:
-            # No charges — direct travel (shouldn't happen for through-buses but guard it)
+            # No charges — direct travel (should never happen for a valid plan, but guard it)
             total_dist = abs(positions[bus.destination] - positions[bus.origin])
             travel = (total_dist / speed) * 60.0
             candidate_arrival = int(bus.departure_min + travel)
@@ -162,5 +239,6 @@ class OverallRule(Rule):
         if not arrivals or not departures:
             return 0.0
 
+        # Makespan = how long the whole operation takes
         makespan = max(arrivals) - min(departures)
         return weight * makespan

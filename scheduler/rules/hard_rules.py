@@ -1,20 +1,51 @@
 """
-scheduler/rules/hard_rules.py — Hard constraint rules (feasibility gates).
+scheduler/rules/hard_rules.py  —  Hard constraint rules (the rules that MUST always hold).
 
-All four hard rules from the spec are implemented here.  Any rule that returns
-math.inf causes the candidate plan to be rejected as infeasible.
+WHAT ARE HARD RULES?
+  Hard rules are non-negotiable physical or safety constraints.
+  If a hard rule returns math.inf, the candidate plan is REJECTED immediately —
+  it does not matter how good the soft-objective score is.
 
-Hard rules:
-  H1 — RangeRule          : no leg may exceed battery range.
-  H2 — RouteOrderRule     : stations visited in route order, no backtracking.
-  H3 — ChargerExclusivity : enforced structurally by ChargerPool; this rule
-                             double-checks the committed schedule in validate().
-  H4 — ChargeDurationRule : every charge is exactly world.charge_minutes long.
+  Think of hard rules as: "the schedule is simply ILLEGAL if any of these are broken."
 
-References:
-    docs/00-requirements/02-constraints-and-rules.md  (H1–H4 formal spec)
-    docs/02-scheduler-engine/05-rule-framework.md     (Rule ABC contract)
-    docs/07-testing/01-testing-plan.md                (test_rules.py)
+PDF reference: Page 3, "Hard rules that must always hold"
+  H1 — One bus per charger at a time (1 charger per station)
+       → Enforced by ChargerPool (resources.py), not by a rule class
+  H2 — Charging is always exactly 25 minutes
+       → ChargeDurationRule below
+  H3 — A bus must never run out of range between two consecutive charges
+       → RangeRule below
+  H4 — A bus visits stations in route order — no backtracking
+       → RouteOrderRule below
+
+HOW HARD RULES FIT IN THE SYSTEM:
+  engine.py calls objective.score(ctx, registry)
+  objective.score calls each hard rule's evaluate(ctx)
+  If any hard rule returns math.inf → plan is INFEASIBLE → skip this plan
+  If all hard rules return 0.0 → plan passes → move to soft rules
+
+INTERVIEW TALKING POINT:
+  "I modelled each hard rule as a separate class decorated with @register.
+   The engine never imports hard_rules.py directly — it just asks the registry
+   for all hard rules and runs them generically. To add a new hard rule,
+   I just create a new file with @register. Zero engine changes."
+
+HOW TO ADD A NEW HARD RULE (live demo for interview):
+  1. Create a new file: scheduler/rules/my_rule.py
+  2. Write:
+       from scheduler.rules.registry import Rule, ScheduleContext, register
+
+       @register
+       class MyHardRule(Rule):
+           name = "MyHardRule"
+           kind = "hard"
+
+           def evaluate(self, ctx: ScheduleContext) -> float:
+               # check something
+               if something_is_wrong:
+                   return math.inf   # REJECT this plan
+               return 0.0            # plan is OK
+  3. That's it — the engine picks it up automatically.
 """
 
 from __future__ import annotations
@@ -24,105 +55,172 @@ import math
 from scheduler.rules.registry import Rule, ScheduleContext, register
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# H1 — Range Rule
+# PDF reference: Page 3 — "A bus must never run out of range between
+#                two consecutive charges (or between segments without a charge)"
+# ─────────────────────────────────────────────────────────────────────────────
+
 @register
 class RangeRule(Rule):
     """
-    H1 — Range constraint.
+    Hard rule H1: No leg of the journey can exceed the bus's battery range.
 
-    Returns math.inf if ANY leg in the candidate plan exceeds the bus's range.
-    The legs are: origin→first_charge, each charge→next_charge, last_charge→dest.
+    A "leg" is a continuous drive without charging:
+      origin → first station, station → next station, last station → destination
 
-    This is the primary hard feasibility filter and is the rule that makes a
-    through-trip require ≥2 charges (a bus cannot travel 540 km on 240 km range).
+    WHAT IT CHECKS:
+      For each leg, measure the distance.
+      If any leg > bus.range_km (240 km), return math.inf (INFEASIBLE).
 
-    Ref: docs/00-requirements/02-constraints-and-rules.md §H1
+    WHY THIS IS THE MOST IMPORTANT RULE:
+      A 540 km trip with 240 km range REQUIRES at least 2 charges.
+      Any plan with only 1 charge will fail this rule automatically.
+      So this rule is what forces every bus to charge at least twice.
+
+    PDF reference: Page 3 —
+      "A bus must never run out of range between two consecutive charges"
+      Page 2 — "Battery range: 240 km on a full charge"
+
+    INTERVIEW TALKING POINT:
+      "The RangeRule is the primary hard feasibility filter.
+       It automatically enforces the minimum-2-charges requirement
+       without any special case in the code — a plan with fewer charges
+       just fails the 240 km range check."
+
+    Returns:
+      0.0      if all legs are within range (plan is feasible)
+      math.inf if any leg exceeds range (plan is REJECTED)
     """
 
     name = "RangeRule"
     kind = "hard"
 
     def evaluate(self, ctx: ScheduleContext) -> float:
-        """Return 0.0 if all legs are within range; math.inf otherwise."""
+        # Get this bus's data
         bus = next(b for b in ctx.scenario.buses if b.id == ctx.bus_id)
         positions = ctx.scenario.route.positions
 
-        # Build the full position sequence: origin → plan stations → destination
+        # Build the full sequence of stops: [origin, station1, station2, ..., destination]
+        # PDF reference: Page 2, "Charging plans" — "between any two consecutive charges"
         stops = [bus.origin] + list(ctx.plan) + [bus.destination]
-        for i in range(len(stops) - 1):
-            leg = abs(positions[stops[i + 1]] - positions[stops[i]])
-            if leg > bus.range_km:
-                return math.inf  # H1 violated
 
+        # Check every consecutive pair of stops
+        for i in range(len(stops) - 1):
+            leg_km = abs(positions[stops[i + 1]] - positions[stops[i]])
+            if leg_km > bus.range_km:
+                # This leg is too long — the bus would run out of battery.
+                # Return math.inf to signal: this plan is PHYSICALLY IMPOSSIBLE.
+                return math.inf
+
+        # All legs are within range — this plan is feasible from a range perspective.
         return 0.0
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# H2 — Route Order Rule
+# PDF reference: Page 3 — "A bus visits stations in route order — no backtracking"
+# ─────────────────────────────────────────────────────────────────────────────
 
 @register
 class RouteOrderRule(Rule):
     """
-    H2 — Route order and no-backtracking constraint.
+    Hard rule H2: Buses must visit charging stations in the correct travel order.
 
-    Verifies that the plan's stations form a strictly increasing subsequence of
-    the bus's downstream route nodes.  No node may appear twice, and no bus may
-    visit a station that lies behind its travel direction.
+    For BK buses (Bengaluru→Kochi), stations must be visited left→right:
+      A (100km), then B (220km), then C (320km), then D (440km).
+      A BK bus cannot charge at C and then go back to B.
 
-    Ref: docs/00-requirements/02-constraints-and-rules.md §H2
+    For KB buses (Kochi→Bengaluru), stations must be visited right→left:
+      D (440km), then C (320km), then B (220km), then A (100km).
+
+    WHY THIS MATTERS:
+      In the real world, a bus cannot backtrack on the highway.
+      Once it passes station B, it cannot go back to B.
+
+    PDF reference: Page 3 —
+      "A bus visits stations in route order — no backtracking"
+
+    Returns:
+      0.0      if stations are in correct order (plan is valid)
+      math.inf if any backtracking detected (plan is REJECTED)
     """
 
     name = "RouteOrderRule"
     kind = "hard"
 
     def evaluate(self, ctx: ScheduleContext) -> float:
-        """Return 0.0 if stations are in strict route order; math.inf otherwise."""
+        # An empty plan (no stations) trivially satisfies order — nothing to check
         if not ctx.plan:
-            return 0.0  # empty plan is trivially ordered
+            return 0.0
 
         positions = ctx.scenario.route.positions
         bus = next(b for b in ctx.scenario.buses if b.id == ctx.bus_id)
+
         origin_pos = positions[bus.origin]
         dest_pos = positions[bus.destination]
-        forward = dest_pos > origin_pos  # True for BK, False for KB
+        forward = dest_pos > origin_pos  # True for BK buses, False for KB buses
 
+        # Walk through the plan and check each station is further along than the previous
         prev_pos = origin_pos
         for node in ctx.plan:
             if node not in positions:
-                return math.inf  # unknown node
+                return math.inf  # unknown station name — reject
             pos = positions[node]
             if forward and pos <= prev_pos:
-                return math.inf  # H2 violated: not strictly increasing
+                return math.inf  # BK bus going backwards — INVALID
             if not forward and pos >= prev_pos:
-                return math.inf  # H2 violated: not strictly decreasing
+                return math.inf  # KB bus going forwards — INVALID
             prev_pos = pos
 
-        # Also check destination is in the correct direction
+        # Also check the destination is further along than the last station
         if forward and dest_pos <= prev_pos:
             return math.inf
         if not forward and dest_pos >= prev_pos:
             return math.inf
 
-        return 0.0
+        return 0.0  # all stations are in correct travel order
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# H4 — Charge Duration Rule
+# PDF reference: Page 2 — "Charging: always to full, takes 25 minutes (fixed)"
+#                Page 3 — "Charging is always exactly 25 minutes"
+# ─────────────────────────────────────────────────────────────────────────────
 
 @register
 class ChargeDurationRule(Rule):
     """
-    H4 — Fixed charge duration.
+    Hard rule H4: Every charge session must be exactly world.charge_minutes long.
 
-    Verifies that every charge event in the candidate plan has an end_min that
-    equals start_min + world.charge_minutes.  The ChargerPool already guarantees
-    this, so this rule acts as a double-check used by the validator.
+    In the real problem, charging always fills the battery to full and takes
+    exactly 25 minutes. No partial charges, no shorter charges.
 
-    Ref: docs/00-requirements/02-constraints-and-rules.md §H4
+    WHY THIS IS A RULE AND NOT JUST CODE:
+      The ChargerPool (resources.py) already sets end = start + charge_minutes,
+      so in practice this rule should never fail. But we check it anyway as
+      "defence in depth" — if there is ever an engine bug, this rule catches it
+      during the post-schedule validation step.
+
+    PDF reference: Page 2 — "Charging: always to full, takes 25 minutes (fixed)"
+                   Page 3 — "Charging is always exactly 25 minutes"
+
+    Returns:
+      0.0      if all charge events have the correct duration
+      math.inf if any charge event has wrong duration (should never happen normally)
     """
 
     name = "ChargeDurationRule"
     kind = "hard"
 
     def evaluate(self, ctx: ScheduleContext) -> float:
-        """Return 0.0 if all charge events have the correct duration; inf otherwise."""
-        expected = ctx.scenario.world.charge_minutes
+        expected_duration = ctx.scenario.world.charge_minutes  # should be 25
+
         for event in ctx.charge_events:
-            duration = event["end_min"] - event["start_min"]
-            if duration != expected:
-                return math.inf  # H4 violated
+            actual_duration = event["end_min"] - event["start_min"]
+            if actual_duration != expected_duration:
+                # This should never happen in a correct engine implementation.
+                # If it does, there is a bug in _simulate_plan or ChargerPool.
+                return math.inf
 
         return 0.0
