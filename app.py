@@ -19,6 +19,7 @@ from typing import Tuple
 
 import streamlit as st
 
+from scheduler.config import CONFIG
 from scheduler.engine import schedule
 from scheduler.loader import load_scenario
 from scheduler.logger import log
@@ -28,15 +29,16 @@ from scheduler.validate import validate
 from frontend.icons import icon
 from frontend.styles import inject_css
 from frontend.sidebar import render_sidebar
-from frontend.tabs import render_input_tab, render_bus_tab, render_station_tab
+from frontend.tabs import render_input_tab, render_bus_tab, render_station_tab, render_architecture_tab
+from frontend.sidebar import render_sidebar_score
 
 # ── Page config — must be the FIRST Streamlit call ───────────────────────────
 
 st.set_page_config(
-    page_title="Bus Charging Scheduler",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    page_title=CONFIG.page_title,
+    page_icon=CONFIG.page_icon,
+    layout=CONFIG.page_layout,
+    initial_sidebar_state=CONFIG.sidebar_state,
 )
 
 # ── Inject global CSS (icons, colours, tab SVGs) ─────────────────────────────
@@ -45,7 +47,7 @@ inject_css()
 
 # ── Sidebar — returns user selections ────────────────────────────────────────
 
-selected_path, w_individual, w_operator, w_overall = render_sidebar()
+selected_path, w_individual, w_operator, w_overall, _score_slot = render_sidebar()
 
 # ── Cached scheduler ──────────────────────────────────────────────────────────
 
@@ -116,6 +118,9 @@ except RuntimeError as exc:
     st.error(f"**Engine error:** {exc}")
     st.stop()
 
+# ── Live score fills the placeholder slot right below the sliders ────────────
+render_sidebar_score(result, _score_slot)
+
 # ── Validation banner — always visible above tabs ─────────────────────────────
 
 _IL = "icon-label"
@@ -145,10 +150,11 @@ else:
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 
-tab_input, tab_bus, tab_station = st.tabs([
+tab_input, tab_bus, tab_station, tab_arch = st.tabs([
     "Input",
     "Per-Bus Timetable",
     "Per-Station Order",
+    "Architecture",
 ])
 
 with tab_input:
@@ -159,3 +165,6 @@ with tab_bus:
 
 with tab_station:
     render_station_tab(scenario, result)
+
+with tab_arch:
+    render_architecture_tab(scenario, result)
