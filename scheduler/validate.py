@@ -21,7 +21,6 @@ References:
 
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import List
 
 from scheduler.model import BusPlan, Scenario, ScheduleResult
@@ -62,7 +61,7 @@ def validate(result: ScheduleResult, scenario: Scenario) -> List[str]:
     if violations:
         for v in violations:
             log.rule_check(v, status="FAIL")
-        log.warn(f"Validation complete", violations=len(violations))
+        log.warn("Validation complete", violations=len(violations))
     else:
         log.rule_check("H1 H2 H3 H4 R15 — all hard rules", status="PASS")
         log.success("Schedule fully valid")

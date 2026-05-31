@@ -1,31 +1,57 @@
 """
-scheduler/engine.py — The core scheduling algorithm (deterministic event-driven greedy).
+scheduler/engine.py  —  The core scheduling algorithm.
 
-This is the heart of the system.  Given a validated Scenario, it produces a
-ScheduleResult deterministically.  It has zero Streamlit imports, no global
-mutable state, and can be run headless:
+WHAT THIS FILE DOES:
+  This is the heart of the whole system. It takes a Scenario (all the input data)
+  and produces a ScheduleResult (the complete charging schedule).
 
-    python -m scheduler.engine data/scenarios/scenario_1.json
+  Algorithm name: "Deterministic Event-Driven Greedy Scheduler"
 
-Algorithm (docs/02-scheduler-engine/01-scheduling-logic.md):
-  Step 1: Compute wait-free base arrivals for every bus at every node.
-  Step 2: Enumerate candidate plans for each bus (range-feasible, route-ordered).
-  Step 3: Sort buses by deterministic key: priority DESC → departure ASC → id ASC.
-  Step 4: For each bus, evaluate all candidate plans; commit the lowest-cost feasible
-          plan, persisting charger reservations.
-  Step 5: Assemble BusPlan timelines and station_order.
-  Step 6: Run validate() — raise if any invariant is violated.
+  GREEDY means: we schedule one bus at a time, always picking the
+  cheapest plan for that bus given what's already been committed.
 
-References:
-    docs/02-scheduler-engine/01-scheduling-logic.md   (full algorithm spec)
-    docs/02-scheduler-engine/04-conflict-resolution.md (conflict resolution)
-    docs/00-requirements/02-constraints-and-rules.md   (hard/soft rules)
-    docs/04-api-contracts/01-internal-api-contracts.md (public contract)
+  EVENT-DRIVEN means: we simulate the timeline of charge events
+  (a bus arrives, waits, charges, leaves) rather than solving equations.
+
+  DETERMINISTIC means: the same input always produces the same output.
+  There is no randomness — every run gives exactly the same schedule.
+
+HOW TO RUN AS A CLI (great for interview demo):
+  python -m scheduler.engine data/scenarios/scenario_1.json
+  → Shows the full scheduling process with rich coloured tables in the terminal.
+
+ALGORITHM STEPS:
+  Step 1: Initialise one ChargerPool per station (manages who charges when).
+  Step 2: Sort buses by: priority (high first) → departure_min (early first) → id (alphabetical).
+  Step 3: For each bus, try all candidate charging plans.
+           For each plan:
+             a. Simulate the plan (tentatively reserve charger slots).
+             b. Score the plan using all rules (hard + soft).
+             c. Roll back the tentative reservation.
+          Commit the plan with the lowest cost.
+  Step 4: Build the station_order output.
+  Step 5: Compute the final objective score breakdown.
+  Step 6: Post-validate the schedule (defence in depth).
+
+PDF reference: Page 4, "The one thing we really care about"
+  "Adding a new rule must not require rewriting the engine — just defining the new rule."
+  → Engine uses a pluggable rule registry. Never imports rule classes directly.
+
+PDF reference: Page 9, "The scheduler"
+  "Decides each bus's charging plan and the ORDER in which buses use each station"
+
+INTERVIEW TALKING POINT:
+  "The greedy approach is the right fit for this problem because:
+   1. Only 20 buses and 4 stations — the search space is tiny.
+   2. Each bus has at most 3-4 valid plans, so evaluation is fast.
+   3. The algorithm is fully explainable — every decision is traceable.
+   4. Adding a new rule only requires a new file, never an engine edit."
 """
 
 from __future__ import annotations
 
 import math
+import statistics
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
@@ -38,11 +64,12 @@ from scheduler.model import (
     StationSlot,
 )
 from scheduler.objective import score
-from scheduler.physics import base_arrival_minutes
+from scheduler.physics import minutes_to_hhmm
 from scheduler.plans import candidate_plans
 from scheduler.resources import ChargerPool
 from scheduler.rules.registry import ScheduleContext, get_registry
 from scheduler.logger import log
+from scheduler import validate as _validate
 
 
 # ---------------------------------------------------------------------------
@@ -88,19 +115,6 @@ def _simulate_plan(
     positions = scenario.route.positions
     world = scenario.world
     charge_events = []
-    # current_time tracks when the bus is free (starts at departure)
-    current_time: float = bus.departure_min
-
-    for station in plan:
-        # Physics-only arrival at this station from current_time position
-        # (current_time after the previous charge end, or departure for first stop)
-        # We need to know where the bus currently "is" — which is the previous node.
-        # For simplicity, compute arrival = current_time + travel from previous stop.
-        # Track the previous node through the loop.
-        pass
-
-    # Simpler re-implementation using cumulative position arithmetic:
-    # After each charge, the bus's "time" = end_min; its position = station.
     current_time = float(bus.departure_min)
     prev_node = bus.origin
 
@@ -178,7 +192,11 @@ def schedule(scenario: Scenario) -> ScheduleResult:
         weights=f"ind={scenario.weights.individual} op={scenario.weights.operator} all={scenario.weights.overall}",
     )
 
-    # --- Step 1: Initialise charger pools (one per station) ---
+    # ── Step 1: Create a ChargerPool for every charging station ──────────────
+    # A ChargerPool manages the queue at one station.
+    # It tracks when each charger slot is free and assigns buses to slots.
+    # PDF reference: Page 1 — "Each station has 1 charger"
+    # Future change: set num_chargers=2 in JSON to allow 2 buses simultaneously.
     pools: Dict[str, ChargerPool] = {
         node: ChargerPool(
             node=node,
@@ -188,42 +206,68 @@ def schedule(scenario: Scenario) -> ScheduleResult:
         for node, station in scenario.stations.items()
     }
 
-    # --- Step 2 & 3: Sort buses by deterministic key (R determinism) ---
-    # priority DESC → departure_min ASC → id ASC
+    # ── Step 2: Sort buses into scheduling order ──────────────────────────────
+    # Sorting rule: priority DESC → departure_min ASC → id ASC
+    #
+    # WHY THIS ORDER?
+    #   - Buses with higher priority (e.g., VIP buses) get scheduled first.
+    #   - Among equal-priority buses, earlier departures go first
+    #     (they arrive at stations first, so they should be scheduled first).
+    #   - id as tiebreaker guarantees determinism (same result every run).
+    #
+    # PDF reference: Page 4 — "Growing the world (more buses) must not need a rewrite"
+    # → Priority field is already in the Bus model for future VIP buses.
     sorted_buses: List[Bus] = sorted(
         scenario.buses,
         key=lambda b: (-b.priority, b.departure_min, b.id),
     )
 
-    # --- Step 4: Greedy commitment ---
+    # ── Step 3: Greedy commitment — schedule one bus at a time ───────────────
+    # This is the main loop of the scheduling algorithm.
+    # For each bus (in priority/departure order), we:
+    #   a) Get all valid charging plans
+    #   b) Try each plan, score it, roll back
+    #   c) Commit the cheapest feasible plan permanently
+    #
+    # INTERVIEW TALKING POINT:
+    # "Greedy means we pick the best plan for the current bus given what
+    #  has already been committed. We don't look ahead to future buses.
+    #  This is fast and the decisions are fully explainable."
     committed_plans: List[BusPlan] = []
 
+    log.separator("Scheduling buses")
+
     for bus in sorted_buses:
+        # Get all physically possible charging plans for this bus.
+        # Example: BK bus might have plans [("A","C"), ("B","C"), ("B","D")]
         plans = candidate_plans(bus, scenario)
         if not plans:
             raise ValueError(
-                f"Bus '{bus.id}' has no feasible charging plan.  "
+                f"Bus '{bus.id}' has no feasible charging plan. "
                 f"Check that its range ({bus.range_km} km) is sufficient for the route."
             )
 
         best_plan: Optional[Tuple] = None
         best_events: Optional[List[dict]] = None
         best_cost = math.inf
-        best_breakdown: dict = {}
 
         direction = _bus_direction(bus, scenario)
 
         for plan in plans:
-            # Snapshot pool state for rollback
+            # ── Snapshot pool state so we can roll back ──────────────────────
+            # We are just TESTING this plan — not committing it yet.
+            # Save the current state of all charger pools before we try.
             snapshots = {node: pool.snapshot() for node, pool in pools.items()}
 
-            # Tentatively simulate and score this plan
+            # ── Simulate this plan (tentative) ───────────────────────────────
+            # Walk the bus through its charging stops, reserving charger slots.
+            # This modifies the pool state — we will roll it back after scoring.
             events = _simulate_plan(bus, plan, pools, scenario)
             arrival = _compute_arrival(bus, events, scenario)
 
-            # Build a provisional BusPlan-like object for scoring context
-            tentative_bus_plan_wait = sum(e["wait_min"] for e in events)
-
+            # ── Score this plan using all rules ──────────────────────────────
+            # The ScheduleContext packages everything a rule needs to evaluate this plan.
+            # Rules read scenario data, committed plans, and this plan's charge events.
             ctx = ScheduleContext(
                 bus_id=bus.id,
                 plan=plan,
@@ -234,42 +278,45 @@ def schedule(scenario: Scenario) -> ScheduleResult:
             )
             feasible, cost, breakdown = score(ctx, registry)
 
-            # Rollback pool state (tentative reservation removed)
+            # ── Roll back pool state ─────────────────────────────────────────
+            # This plan was just a test. Remove the tentative reservations.
+            # The winning plan will be re-simulated (permanently) below.
             for node, snap in snapshots.items():
                 pools[node].restore(snap)
 
             if not feasible:
-                continue  # plan violates a hard rule — skip
+                continue  # this plan violates a hard rule → skip it
 
-            # Tie-break: cost asc → fewer charges → earlier finishing → lex plan
+            # ── Compare to current best plan ─────────────────────────────────
+            # Lower cost = better plan.
+            # Tie-break: fewer charges → earlier arrival → lexicographic order.
+            # These tie-breaks ensure determinism when two plans have equal cost.
             is_better = cost < best_cost
             if cost == best_cost and best_plan is not None:
-                # Tie-break: prefer fewer charges
                 if len(plan) < len(best_plan):
-                    is_better = True
+                    is_better = True  # fewer charges is better (less time charging)
                 elif len(plan) == len(best_plan):
-                    # Further tie-break: earlier last arrival
                     best_arrival = _compute_arrival(bus, best_events, scenario)
                     if arrival < best_arrival:
-                        is_better = True
+                        is_better = True  # earlier arrival is better
                     elif arrival == best_arrival:
-                        # Final tie-break: lexicographic plan order
                         if plan < best_plan:
-                            is_better = True
+                            is_better = True  # alphabetical tiebreaker for determinism
 
             if is_better:
                 best_plan = plan
                 best_events = events
                 best_cost = cost
-                best_breakdown = breakdown
 
         if best_plan is None:
             raise ValueError(
-                f"Bus '{bus.id}': all candidate plans are infeasible after scoring.  "
+                f"Bus '{bus.id}': all candidate plans are infeasible after scoring. "
                 f"This indicates a data or rule configuration error."
             )
 
-        # Commit the best plan — re-simulate (actually reserve slots permanently)
+        # ── Commit the winning plan permanently ──────────────────────────────
+        # Re-simulate the best plan — this time the charger pool reservations
+        # are permanent (not rolled back). The bus is now "scheduled".
         final_events = _simulate_plan(bus, best_plan, pools, scenario)
         final_arrival = _compute_arrival(bus, final_events, scenario)
         total_wait = sum(e["wait_min"] for e in final_events)
@@ -295,14 +342,20 @@ def schedule(scenario: Scenario) -> ScheduleResult:
             total_wait=total_wait,
         )
         committed_plans.append(bus_plan)
-        log.debug(
-            f"Committed {bus.id}",
-            plan="→".join(best_plan),
-            wait=f"{total_wait} min",
-            arrival=f"{final_arrival} min",
+        # Log one line per bus showing what plan was chosen and how long it waits.
+        # This is the most useful output for understanding the algorithm step by step.
+        log.bus_committed(
+            bus.id,
+            plan=best_plan,
+            wait=total_wait,
+            arrival=minutes_to_hhmm(final_arrival),
+            operator=bus.operator,
         )
 
-    # --- Step 5: Assemble station_order ---
+    # ── Step 4: Assemble the per-station charge order ─────────────────────────
+    # Build a dict: station_name → [list of StationSlot sorted by start time]
+    # This is what the "Per-Station Order" tab shows in the UI.
+    # PDF reference: Page 9 — "per-station view: for each of A,B,C,D, show the order"
     station_order: Dict[str, List[StationSlot]] = defaultdict(list)
     for bp in committed_plans:
         for evt in bp.charge_events:
@@ -321,18 +374,19 @@ def schedule(scenario: Scenario) -> ScheduleResult:
     for node in station_order:
         station_order[node].sort(key=lambda s: s.start_min)
 
-    # --- Step 6: Compute final objective breakdown ---
-    # Re-score against the full committed schedule for display
+    # ── Step 5: Compute the final objective score breakdown ───────────────────
+    # Now that all buses are committed, compute the final aggregate scores.
+    # These are displayed in the UI's "Objective breakdown" expander.
+    # PDF reference: Page 4, "What to optimize for" (S1, S2, S3)
     final_breakdown: Dict[str, float] = {}
     total_individual = sum(bp.total_wait for bp in committed_plans)
     final_breakdown["IndividualWaitRule"] = scenario.weights.individual * total_individual
 
-    import statistics as _stats
     op_waits: Dict[str, List[int]] = {}
     for bp in committed_plans:
         op_waits.setdefault(bp.operator, []).append(bp.total_wait)
     op_variance = sum(
-        _stats.variance(waits) if len(waits) > 1 else 0.0
+        statistics.variance(waits) if len(waits) > 1 else 0.0
         for waits in op_waits.values()
     )
     final_breakdown["OperatorRule"] = scenario.weights.operator * op_variance
@@ -355,7 +409,6 @@ def schedule(scenario: Scenario) -> ScheduleResult:
     )
 
     # --- Step 6: Post-schedule validation (defence in depth) ---
-    from scheduler import validate as _validate
     violations = _validate.validate(result, scenario)
     if violations:
         for v in violations:
@@ -365,9 +418,10 @@ def schedule(scenario: Scenario) -> ScheduleResult:
             + "\n".join(f"  {v}" for v in violations)
         )
 
-    log.separator("Objective")
-    for rule_name, val in final_breakdown.items():
-        log.metric(rule_name, value=round(val, 2))
+    # Print a beautiful table showing the objective score breakdown.
+    # PDF reference: Page 4 — "three soft rules" S1, S2, S3
+    log.separator("Objective Score Breakdown")
+    log.objective_table(final_breakdown, total_objective)
     log.success(
         f"Schedule complete — {len(committed_plans)} buses",
         objective=f"{total_objective:,.1f}",
@@ -383,7 +437,6 @@ def schedule(scenario: Scenario) -> ScheduleResult:
 
 if __name__ == "__main__":
     import sys
-    import json
     from scheduler.loader import load_scenario
     from scheduler.validate import validate
 
@@ -400,14 +453,7 @@ if __name__ == "__main__":
 
     log.separator("Station Order")
     for node, slots in _result.station_order.items():
-        for slot in slots:
-            log.schedule(
-                slot.bus_id,
-                station=node,
-                wait=slot.wait_min,
-                start=f"{slot.start_min} min",
-                end=f"{slot.end_min} min",
-            )
+        log.schedule_table(node, slots)
 
     log.separator("Validation")
     if _violations:

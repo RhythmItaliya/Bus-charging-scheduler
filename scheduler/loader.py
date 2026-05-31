@@ -125,7 +125,6 @@ def load_scenario(path: str | Path) -> Scenario:
     segments: List[Segment] = []
     # Build position map: cumulative distance from nodes[0]
     positions: dict[str, float] = {nodes[0]: 0.0}
-    prev_node = nodes[0]
     running_distance = 0.0
 
     # Validate that segments connect nodes in declared order
@@ -155,7 +154,6 @@ def load_scenario(path: str | Path) -> Scenario:
         segments.append(Segment(from_node=from_node, to_node=to_node, distance_km=dist))
         running_distance += dist
         positions[to_node] = running_distance
-        prev_node = to_node
 
     route = Route(
         nodes=tuple(nodes),

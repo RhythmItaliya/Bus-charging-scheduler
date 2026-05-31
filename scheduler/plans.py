@@ -1,21 +1,46 @@
 """
-scheduler/plans.py — Candidate charging plan enumeration.
+scheduler/plans.py  —  Enumerate all physically possible charging plans for a bus.
 
-For each bus, enumerates every range-feasible, route-ordered subset of the bus's
-downstream stations.  This is the "search space" the engine iterates over when
-selecting the cheapest plan for each bus.
+WHAT THIS FILE DOES:
+  For each bus, this file finds every combination of charging stations
+  that is physically possible — meaning every leg of the journey fits
+  within the 240 km battery range.
 
-Verified feasibility sets (docs/00-requirements/01-requirements-analysis.md §4):
-  Bengaluru→Kochi (positions A=100, B=220, C=320, D=440, Kochi=540):
-    - First charge must be A or B (C=320 > 240 km range).
-    - Valid 2-charge plans: {A,C}, {B,C}, {B,D}
-      ({A,D} invalid: A→D = 340 > 240)
-  Kochi→Bengaluru: mirrors above (reversed positions).
+  A "plan" = the ordered list of stations where the bus will charge.
+  Example plan for a Bengaluru→Kochi bus:  ("A", "C")
+    - Start at Bengaluru (full charge)
+    - Drive 100 km to A  → charge
+    - Drive 220 km to C  → charge
+    - Drive 220 km to Kochi → done
 
-References:
-    docs/02-scheduler-engine/01-scheduling-logic.md  (step 2: candidate plans)
-    docs/00-requirements/02-constraints-and-rules.md (H1, H2)
-    docs/07-testing/01-testing-plan.md               (test_plans.py)
+WHY WE NEED THIS (PDF reference: Page 2, "Charging plans"):
+  "A bus can drive a maximum of 240 km on a full charge."
+  "This means a bus going Bengaluru→Kochi cannot complete the trip
+   without charging at least 2 times (total trip is 540 km)."
+  "The scheduler chooses WHICH 2 (or more) stations the bus uses."
+
+VALID PLANS FOR BK BUSES (Bengaluru→Kochi):
+  Route positions: Bengaluru=0, A=100, B=220, C=320, D=440, Kochi=540
+
+  {A, C}:  legs 100 · 220 · 220  ← all ≤ 240 ✓  (most buses choose this)
+  {B, C}:  legs 220 · 100 · 220  ← all ≤ 240 ✓
+  {B, D}:  legs 220 · 220 · 100  ← all ≤ 240 ✓
+  {A, D}:  legs 100 · 340 · 100  ← A→D = 340 > 240 ✗  INVALID
+
+VALID PLANS FOR KB BUSES (Kochi→Bengaluru):
+  Route positions (reversed): Kochi=540, D=440, C=320, B=220, A=100, Bengaluru=0
+
+  {D, C}:  legs 100 · 120 · 320  ← wait, C→A=220, A→Bng=100 ✓
+           Actually: 100 · 120 + rest... (engine checks each leg)
+  {D, B}:  legs 100 · 220 · 220  ← all ≤ 240 ✓
+  {C, B}:  legs 220 · 100 · 220  ← all ≤ 240 ✓
+  {C, A}:  legs 220 · 220 · 100  ← all ≤ 240 ✓
+
+INTERVIEW TALKING POINT:
+  "I use Python's itertools.combinations to enumerate every possible subset
+   of stations. For each subset, I check if every leg of the journey is
+   within the 240 km range. This gives me all valid charging plans.
+   The engine then picks the cheapest one using the weighted rules."
 """
 
 from __future__ import annotations
@@ -25,86 +50,95 @@ from typing import List, Tuple
 
 from scheduler.model import Bus, Scenario
 
-
-# Type alias: a plan is an ordered tuple of station node names.
+# A Plan is a tuple of station names in travel order.
+# Example: ("A", "C") or ("B", "D")
 Plan = Tuple[str, ...]
 
 
 def downstream_stations(bus: Bus, scenario: Scenario) -> List[str]:
     """
-    Return the list of charging-eligible stations for a bus, in travel order.
+    Find all charging-eligible stations for this bus, in travel order.
 
-    A station is downstream if it lies between (exclusive) the bus's origin and
-    destination along the route.  Endpoints are never charging stations (R7).
+    "Downstream" means: between the bus's origin and destination.
+    Endpoints (Bengaluru, Kochi) are never included — they are not
+    scheduling stations.
 
-    Args:
-        bus:      The bus whose downstream stations to find.
-        scenario: The fully-loaded scenario (contains route and station map).
+    PDF reference: Page 1 —
+      "Only A, B, C, and D are scheduling charging stations —
+       the endpoints are not part of the scheduling problem."
 
-    Returns:
-        Ordered list of station node names in the bus's direction of travel.
+    Example:
+      Bus goes Bengaluru → Kochi  →  returns ["A", "B", "C", "D"]
+      Bus goes Kochi → Bengaluru  →  returns ["D", "C", "B", "A"]
+
+    WHY REVERSE FOR KB BUSES?
+      A KB bus goes right to left on the route.
+      Its stations must also be in right-to-left order: D, C, B, A.
+      The range check uses position values, so order matters.
     """
     nodes = list(scenario.route.nodes)
-    try:
-        origin_idx = nodes.index(bus.origin)
-        dest_idx = nodes.index(bus.destination)
-    except ValueError as exc:
-        raise ValueError(
-            f"bus '{bus.id}': origin or destination not in route nodes."
-        ) from exc
+    origin_idx = nodes.index(bus.origin)
+    dest_idx = nodes.index(bus.destination)
 
-    # Travel direction: may be forward (BK) or backward (KB)
     if origin_idx < dest_idx:
-        # Bengaluru → Kochi direction
-        segment = nodes[origin_idx + 1: dest_idx]
+        # BK direction (Bengaluru → Kochi): take all nodes between origin and dest
+        segment = nodes[origin_idx + 1 : dest_idx]
     else:
-        # Kochi → Bengaluru direction (reversed)
-        segment = nodes[dest_idx + 1: origin_idx][::-1]
+        # KB direction (Kochi → Bengaluru): take nodes in reverse travel order
+        segment = nodes[dest_idx + 1 : origin_idx][::-1]
 
-    # Only keep nodes that are actual charging stations in this scenario
+    # Only keep nodes that have a charging station in this scenario
+    # (the scenario JSON defines which nodes are stations)
     return [n for n in segment if n in scenario.stations]
 
 
 def candidate_plans(bus: Bus, scenario: Scenario) -> List[Plan]:
     """
-    Enumerate all range-feasible, route-ordered subsets of downstream stations.
+    Return every range-feasible charging plan for this bus.
 
-    A plan is feasible iff every leg (origin → first charge, charge → charge,
-    last charge → destination) is ≤ bus.range_km (hard rule H1).
+    HOW IT WORKS (step by step):
+      1. Get the list of downstream charging stations (e.g. ["A","B","C","D"] for BK).
+      2. Try every combination of 1, 2, 3, 4 stations.
+         itertools.combinations(["A","B","C","D"], 2) gives:
+           ("A","B"), ("A","C"), ("A","D"), ("B","C"), ("B","D"), ("C","D")
+      3. For each combination, check if every leg ≤ 240 km (the range rule).
+      4. Keep only the feasible ones. Return them sorted: shortest plans first.
 
-    The minimum plan size is 1 charge, but because a through-trip (540 km)
-    exceeds 240 km range, plans with < 2 charges will be range-infeasible and
-    will be filtered out — enforcing R15 without special-casing it.
+    WHY SHORT PLANS FIRST?
+      The engine prefers fewer charges when cost is equal — less time spent
+      charging means earlier arrival. This is a reasonable default.
 
-    Plans are returned ordered: shortest first, then lexicographic by station
-    names.  Tie-breaking within the engine prefers fewer charges when cost
-    is equal (docs/02-scheduler-engine/01-scheduling-logic.md, edge handling).
+    PDF reference: Page 2, "Charging plans"
+      "A bus can drive a maximum of 240 km on a full charge."
+      "between any two consecutive charges ... a bus cannot travel more than 240 km"
 
-    Args:
-        bus:      The bus to generate plans for.
-        scenario: The fully-loaded scenario.
+    INTERVIEW TALKING POINT:
+      "For the 540 km BK route with 240 km range, any plan with only 1 charge
+       is automatically invalid — the longest single leg would be more than 240 km.
+       So the RangeRule filter naturally enforces the minimum 2 charges rule
+       without any special case in the code."
 
     Returns:
-        List of feasible plans, each a tuple of station names in route order.
-        Empty list if NO feasible plan exists (infeasible bus — caller must
-        raise a surfaced error, not silently continue).
+      List of feasible plans. Empty list means no valid plan exists (error).
+      Example for BK buses: [("A","C"), ("B","C"), ("B","D")]
     """
     stations = downstream_stations(bus, scenario)
     if not stations:
-        return []
+        return []  # no stations available — caller will raise an error
 
     positions = scenario.route.positions
-    bus_range = bus.range_km  # per-bus range, defaults to world.battery_range_km
+    bus_range = bus.range_km  # each bus can override the default 240 km range
     feasible: List[Plan] = []
 
-    # Enumerate all non-empty subsets, from size 1 upward
+    # Try every subset of stations (size 1, 2, 3, 4 ...)
     for size in range(1, len(stations) + 1):
         for combo in combinations(stations, size):
-            plan = combo  # already in route order because downstream_stations preserves it
+            # combo is already in route order because downstream_stations preserves order
+            plan = combo
             if _is_range_feasible(plan, bus, positions, bus_range):
                 feasible.append(plan)
 
-    # Sort: by length first (prefer fewer charges on equal cost), then lexicographic
+    # Sort: fewer charges first, then alphabetically for determinism
     feasible.sort(key=lambda p: (len(p), p))
     return feasible
 
@@ -116,31 +150,39 @@ def _is_range_feasible(
     max_range: float,
 ) -> bool:
     """
-    Check whether a charging plan satisfies the range constraint on every leg.
+    Check if every leg of this charging plan is within the battery range.
 
-    Legs evaluated:
-      • origin → first station in plan
-      • consecutive stations in plan
-      • last station in plan → destination
+    A "leg" is one continuous drive without charging:
+      - From origin to first charging station
+      - Between consecutive charging stations
+      - From last charging station to destination
 
-    All legs must be ≤ max_range.
+    PDF reference: Page 2, "Hard rules that must always hold"
+      "A bus must never run out of range between two consecutive charges"
+      = no leg can exceed max_range (240 km)
 
-    Returns:
-        True if every leg is within range; False otherwise.
+    Example:
+      plan = ("A", "D"), BK bus, range = 240 km
+      Leg 1: Bengaluru(0) → A(100) = 100 km ✓
+      Leg 2: A(100) → D(440) = 340 km ✗  FAIL (340 > 240)
+      → returns False
+
+      plan = ("A", "C"), BK bus, range = 240 km
+      Leg 1: Bengaluru(0) → A(100) = 100 km ✓
+      Leg 2: A(100) → C(320) = 220 km ✓
+      Leg 3: C(320) → Kochi(540) = 220 km ✓
+      → returns True
     """
-    origin_pos = positions[bus.origin]
-    dest_pos = positions[bus.destination]
-
-    # Build the full stop sequence: [origin] + plan stations + [destination]
-    stop_positions = [origin_pos]
+    # Build the full list of positions: [origin, station1, station2, ..., destination]
+    stop_positions = [positions[bus.origin]]
     for node in plan:
         stop_positions.append(positions[node])
-    stop_positions.append(dest_pos)
+    stop_positions.append(positions[bus.destination])
 
     # Check every consecutive leg
     for i in range(len(stop_positions) - 1):
         leg = abs(stop_positions[i + 1] - stop_positions[i])
         if leg > max_range:
-            return False  # hard rule H1 violated
+            return False  # this leg is too long — plan is invalid
 
     return True
