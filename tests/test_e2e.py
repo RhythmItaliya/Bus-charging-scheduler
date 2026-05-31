@@ -82,14 +82,16 @@ class TestAllScenariosScheduleCleanly:
 
     @pytest.mark.parametrize("path", ALL_SCENARIOS)
     def test_station_order_covers_expected_nodes(self, path):
-        """station_order must have an entry for every intermediate node."""
+        """station_order must be non-empty and every recorded node must be intermediate."""
         scenario = load_scenario(path)
         result = schedule(scenario)
-        for node in scenario.intermediate_nodes:
-            assert node in result.station_order or node not in result.station_order, True
-            # All nodes that received any charge should be present
         # At least some charges must have been allocated
-        assert len(result.station_order) > 0
+        assert len(result.station_order) > 0, "station_order is empty — no buses were charged"
+        # Every key in station_order must be a valid intermediate node
+        for node in result.station_order:
+            assert node in scenario.intermediate_nodes, (
+                f"station_order contains '{node}' which is not an intermediate node"
+            )
 
     @pytest.mark.parametrize("path", ALL_SCENARIOS)
     def test_objective_breakdown_has_all_three_terms(self, path):
