@@ -5,14 +5,14 @@
 > and produces a complete per-bus timetable and per-station charge order -
 > all in a single Python + Streamlit app.
 
-[Open in Streamlit →](https://bus-charging-scheduler-gxy2aoipfkggccvrevanu6.streamlit.app)
+[Open in Streamlit →](https://bus-charging-scheduler.streamlit.app/)
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python&logoColor=white)
 &nbsp;
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.58-red?logo=streamlit&logoColor=white)
 &nbsp;
 ![rich](https://img.shields.io/badge/rich-terminal-green)
 
-**Live app:** https://bus-charging-scheduler-gxy2aoipfkggccvrevanu6.streamlit.app
+**Live app:** https://bus-charging-scheduler.streamlit.app/
 
 **GitHub:** https://github.com/RhythmItaliya/Bus-charging-scheduler
 
