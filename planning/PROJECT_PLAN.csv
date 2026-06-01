@@ -1,0 +1,90 @@
+Area,Document,Purpose,Drives Code,Depends On,Priority,Status
+Requirements,00-requirements/01-requirements-analysis.md,Line-by-line decode of every PDF requirement,Defines acceptance gates for all modules,-,P0,DONE
+Requirements,00-requirements/02-constraints-and-rules.md,Formal hard/soft rule math,"hard_rules.py, soft_rules.py, objective.py",01-req-analysis,P0,DONE
+Requirements,00-requirements/03-hidden-expectations.md,What is really being graded + curveballs,Data-driven model decisions,01-req-analysis,P0,DONE
+Requirements,00-requirements/04-requirements-traceability.md,Req -> doc -> code -> test matrix,Test plan coverage,all,P1,DONE
+Architecture,01-architecture/01-system-architecture.md,Layered single-process architecture,"Package layout, dependency rule",requirements,P0,DONE
+Architecture,01-architecture/02-component-responsibilities.md,Per-module responsibility + deps,All scheduler/* modules,01-system-arch,P0,DONE
+Architecture,01-architecture/03-design-decisions.md,ADRs to defend in interview,engine.py strategy seam,01-system-arch,P1,DONE
+Scheduler Engine,02-scheduler-engine/01-scheduling-logic.md,End-to-end algorithm spec,engine.py,"data-model, constraints",P0,DONE
+Scheduler Engine,02-scheduler-engine/02-charging-allocation-strategy.md,ChargerPool allocation + ordering,resources.py,scheduling-logic,P0,DONE
+Scheduler Engine,02-scheduler-engine/03-optimization-rules.md,Exact soft-metric formulas,"soft_rules.py, objective.py",constraints,P0,DONE
+Scheduler Engine,02-scheduler-engine/04-conflict-resolution.md,Charger contention resolution,"engine.py, resources.py",allocation,P0,DONE
+Scheduler Engine,02-scheduler-engine/05-rule-framework.md,Pluggable rule registry + autodiscovery,rules/base.py,architecture,P0,DONE
+Data Model,03-data-model/01-data-model-design.md,Domain model + file persistence + DB-ready schema,model.py,requirements,P0,DONE
+Data Model,03-data-model/02-scenario-schema.md,Exact scenario JSON contract + 5 scenarios,"data/scenarios/*.json, loader.py",data-model-design,P0,DONE
+Data Model,03-data-model/03-output-schema.md,ChargeEvent/BusPlan/ScheduleResult contract,model.py output objects,data-model-design,P0,DONE
+API Contracts,04-api-contracts/01-internal-api-contracts.md,Function contracts + forward REST,loader/engine/validate/adapters signatures,architecture,P1,DONE
+API Contracts,04-api-contracts/02-validation-rules.md,3-stage validation spec,"loader.py, validate.py",data-model,P0,DONE
+Frontend,05-frontend/01-frontend-flow.md,Streamlit UX flow + 4 views,app.py,"adapters, api",P0,DONE
+Frontend,05-frontend/02-ui-components.md,Component-level acceptance,app.py,frontend-flow,P1,DONE
+Backend,06-backend/01-backend-services.md,In-process service responsibilities,loader/engine/validate/adapters,architecture,P1,DONE
+Testing,07-testing/01-testing-plan.md,pytest suite + pyramid,tests/*,all engine docs,P0,DONE
+Testing,07-testing/02-edge-cases.md,Edge-case catalogue,"tests/*, engine guards",testing-plan,P0,DONE
+DevOps,08-devops/01-deployment-strategy.md,Streamlit Cloud deploy + CI,"requirements.txt, gh-actions",all code,P0,DONE
+Security,09-security/01-security-considerations.md,Right-sized threat model,"gitignore, deps pinning",devops,P2,DONE
+Observability,10-observability/01-observability.md,Decision transparency + logging,"engine logging, objective breakdown",scheduler,P1,DONE
+Submission,11-submission/01-submission-checklist.md,Final pre-submit gate,-,all,P0,DONE
+Submission,11-submission/02-interview-prep.md,Live-task + defence prep,-,all,P1,DONE
+,,,,,,
+CODE FILES,File,Purpose,Key Classes / Functions,Depends On,Status,Lines
+Code,scheduler/model.py,Domain model — Bus / Station / ChargeEvent / BusPlan / ScheduleResult,"Bus, Station, ChargeEvent, BusPlan, ScheduleResult",—,DONE,414
+Code,scheduler/loader.py,Load + validate scenario JSON into model objects,load_scenario(),model.py,DONE,249
+Code,scheduler/physics.py,Travel-time & range maths,travel_time() / can_reach(),model.py,DONE,89
+Code,scheduler/plans.py,Greedy charging-plan builder — picks which stations each bus uses,build_plans(),physics.py,DONE,188
+Code,scheduler/resources.py,ChargerPool — one slot per station; tracks occupancy,ChargerPool,model.py,DONE,107
+Code,scheduler/rules/hard_rules.py,"H1 RangeRule, H2 RouteOrderRule, H4 ChargeDurationRule",RangeRule / RouteOrderRule / ChargeDurationRule,model.py,DONE,226
+Code,scheduler/rules/soft_rules.py,"S1 IndividualWaitRule, S2 OperatorRule, S3 OverallRule",IndividualWaitRule / OperatorRule / OverallRule,model.py,DONE,244
+Code,scheduler/rules/registry.py,RuleRegistry — register / discover / apply rules,RuleRegistry,rules/base.py,DONE,170
+Code,scheduler/rules/_discover.py,Auto-discover rule classes from a module,discover_rules(),registry.py,DONE,29
+Code,scheduler/engine.py,Greedy event-driven scheduler — ties all pieces together,SchedulerEngine.run(),all scheduler/*,DONE,464
+Code,scheduler/objective.py,Compute weighted objective score from a schedule,compute_objective(),soft_rules.py,DONE,65
+Code,scheduler/validate.py,Post-schedule hard-rule validation (H1–H4 + R15),validate_schedule(),model.py,DONE,184
+Code,scheduler/adapters.py,Convert ScheduleResult into pandas DataFrames for UI,to_per_bus_df() / to_per_station_df(),model.py,DONE,182
+Code,scheduler/config.py,Central config dataclass (speed / range / charge time / weights),Config,—,DONE,150
+Code,scheduler/logger.py,Rich terminal output — panels / tables / colour-coded bus commits,RichLogger,rich,DONE,434
+Code,app.py,Streamlit entry-point — wires scenario picker to engine to UI tabs,main(),frontend/*,DONE,~120
+Code,frontend/tabs.py,Input tab / Per-Bus tab / Per-Station tab / Architecture tab,render_*(),adapters.py,DONE,~200
+Code,frontend/sidebar.py,Scenario picker + weight sliders in sidebar,render_sidebar(),config.py,DONE,~80
+Code,frontend/styles.py,CSS overrides for Streamlit,inject_styles(),—,DONE,~40
+Code,frontend/icons.py,SVG / emoji icon helpers,—,—,DONE,~30
+,,,,,,
+TEST FILES,File,Coverage,—,—,Status,—
+Tests,tests/test_loader.py,Scenario JSON loading + schema validation,—,loader.py,DONE,—
+Tests,tests/test_physics.py,Travel time + range maths,—,physics.py,DONE,—
+Tests,tests/test_plans.py,Charging-plan builder (all 5 scenarios),—,plans.py,DONE,—
+Tests,tests/test_charger.py,ChargerPool occupancy + queuing,—,resources.py,DONE,—
+Tests,tests/test_rules.py,All 3 hard rules + all 3 soft rules,—,rules/*,DONE,—
+Tests,tests/test_adapters.py,DataFrame adapter correctness,—,adapters.py,DONE,—
+Tests,tests/test_validate.py,Post-schedule validator (valid + invalid schedules),—,validate.py,DONE,—
+Tests,tests/test_e2e.py,End-to-end all 5 scenarios run without errors,—,engine.py,DONE,—
+Tests,tests/test_weights.py,Changing weights produces different schedules,—,objective.py,DONE,—
+Tests,tests/conftest.py,Shared fixtures (scenario objects + mini-scenarios),—,all,DONE,—
+,,,,,,
+DATA FILES,File,Scenario,Buses BK / KB,Special Feature,Status,—
+Data,data/scenarios/scenario_1.json,Scenario 1 — Even Spacing,10 / 10,Baseline 15-min gaps — default weights 1/1/1,DONE,—
+Data,data/scenarios/scenario_2.json,Scenario 2 — Bunched Start,10 / 10,Heavy early contention — 8-min gaps first 50 min,DONE,—
+Data,data/scenarios/scenario_3.json,Scenario 3 — Asymmetric Load,10 / 4,Uneven traffic across directions,DONE,—
+Data,data/scenarios/scenario_4.json,Scenario 4 — Operator-Heavy,10 / 10,KPN dominates BK fleet — operator weight = 2.0,DONE,—
+Data,data/scenarios/scenario_5.json,Scenario 5 — Worst-Case Convergence,10 / 10,All 20 buses in 72-min window — maximum contention,DONE,—
+,,,,,,
+DIAGRAM FILES,Diagram File,Type,—,—,—,—
+Diagrams,docs/00-requirements/diagrams/requirements-map.md,flow,—,—,DONE,—
+Diagrams,docs/01-architecture/diagrams/component-dependency.md,graph,—,—,DONE,—
+Diagrams,docs/01-architecture/diagrams/data-flow.md,flow,—,—,DONE,—
+Diagrams,docs/01-architecture/diagrams/system-architecture.md,flow (layers),—,—,DONE,—
+Diagrams,docs/02-scheduler-engine/diagrams/charging-allocation-flow.md,flow,—,—,DONE,—
+Diagrams,docs/02-scheduler-engine/diagrams/conflict-resolution-flow.md,sequence,—,—,DONE,—
+Diagrams,docs/02-scheduler-engine/diagrams/optimization-decision-flow.md,flow,—,—,DONE,—
+Diagrams,docs/02-scheduler-engine/diagrams/scheduler-workflow.md,flow,—,—,DONE,—
+Diagrams,docs/02-scheduler-engine/diagrams/state-management-flow.md,state,—,—,DONE,—
+Diagrams,docs/03-data-model/diagrams/entity-relationship.md,ER,—,—,DONE,—
+Diagrams,docs/03-data-model/diagrams/scenario-data-flow.md,flow,—,—,DONE,—
+Diagrams,docs/04-api-contracts/diagrams/api-interaction.md,sequence,—,—,DONE,—
+Diagrams,docs/04-api-contracts/diagrams/retry-flow.md,flow,—,—,DONE,—
+Diagrams,docs/05-frontend/diagrams/render-sequence.md,sequence,—,—,DONE,—
+Diagrams,docs/05-frontend/diagrams/ui-navigation-flow.md,flow,—,—,DONE,—
+Diagrams,docs/06-backend/diagrams/backend-sequence.md,sequence,—,—,DONE,—
+Diagrams,docs/07-testing/diagrams/test-pyramid.md,flow,—,—,DONE,—
+Diagrams,docs/08-devops/diagrams/deployment-flow.md,flow,—,—,DONE,—
+Diagrams,docs/10-observability/diagrams/logging-flow.md,flow,—,—,DONE,—
