@@ -2,11 +2,10 @@
 
 > **Electric bus charging scheduler for the Bengaluru – Kochi corridor.**
 > Decides which stations each bus charges at, who waits when chargers clash,
-> and produces a complete per-bus timetable and per-station charge order —
+> and produces a complete per-bus timetable and per-station charge order -
 > all in a single Python + Streamlit app.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://bus-charging-scheduler-gxy2aoipfkggccvrevanu6.streamlit.app)
-&nbsp;
+[Open in Streamlit →](https://bus-charging-scheduler-gxy2aoipfkggccvrevanu6.streamlit.app)
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python&logoColor=white)
 &nbsp;
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.58-red?logo=streamlit&logoColor=white)
@@ -23,16 +22,16 @@
 
 ## Screenshots
 
-### Input tab — scenario overview and bus roster
+### Input tab - scenario overview and bus roster
 ![Input tab](screenshots/01-input-tab.png)
 
-### Per-Bus Timetable — full charging timeline for every bus
+### Per-Bus Timetable - full charging timeline for every bus
 ![Per-Bus Timetable](screenshots/02-bus-timetable.png)
 
-### Per-Station Order — charge queue at each of the 4 stations
+### Per-Station Order - charge queue at each of the 4 stations
 ![Per-Station Order](screenshots/03-station-order.png)
 
-### Architecture tab — live system diagram and rule registry
+### Architecture tab - live system diagram and rule registry
 ![Architecture](screenshots/04-architecture.png)
 
 ---
@@ -69,7 +68,7 @@ Bengaluru ──100 km── A ──120 km── B ──100 km── C ──1
 | A → C | 100 km ✓ | 220 km ✓ | 220 km ✓ |
 | B → C | 220 km ✓ | 100 km ✓ | 220 km ✓ |
 | B → D | 220 km ✓ | 220 km ✓ | 100 km ✓ |
-| ~~A → D~~ | 100 km ✓ | **340 km ✗** | — | ← INVALID, exceeds range |
+| ~~A → D~~ | 100 km ✓ | **340 km ✗** | - | ← INVALID, exceeds range |
 
 ---
 
@@ -107,7 +106,7 @@ Open `http://localhost:8501` in your browser.
 python -m scheduler.engine data/scenarios/scenario_1.json
 ```
 
-This prints a full scheduling walkthrough using the **rich** library —
+This prints a full scheduling walkthrough using the **rich** library -
 beautiful coloured panels, per-bus commit lines, station tables, and the objective score breakdown.
 Great for understanding exactly how the algorithm works step by step.
 
@@ -132,7 +131,7 @@ Open `data/scenarios/scenario_4.json` and edit the `weights` object:
 ```
 
 That is the **entire change**. No Python code is touched.
-The engine reads weights via `ctx.weights.get("operator")` — never a hardcoded value.
+The engine reads weights via `ctx.weights.get("operator")` - never a hardcoded value.
 
 ---
 
@@ -163,7 +162,7 @@ class ElectricityCostRule(Rule):
         return weight * penalty
 ```
 
-Then add `"electricity_cost": 1.0` to the scenario's `weights` block. Done — no other files change.
+Then add `"electricity_cost": 1.0` to the scenario's `weights` block. Done - no other files change.
 
 ---
 
@@ -190,7 +189,7 @@ The app discovers new JSON files in `data/scenarios/` automatically on the next 
 ```
 bus-charging-scheduler/
 │
-├── app.py                  ← Streamlit entry point — wires UI to engine (thin layer)
+├── app.py                  ← Streamlit entry point - wires UI to engine (thin layer)
 ├── requirements.txt        ← streamlit + pandas + rich
 ├── ARCHITECTURE.md         ← framework choice, data model, change-foresight table, assumptions
 ├── pytest.ini
@@ -201,7 +200,7 @@ bus-charging-scheduler/
 │   ├── styles.py           ← CSS injection + tab icons
 │   └── icons.py            ← inline SVG icon library
 │
-├── scheduler/              ← pure-Python engine (zero Streamlit imports — fully headless)
+├── scheduler/              ← pure-Python engine (zero Streamlit imports - fully headless)
 │   ├── config.py           ← centralised defaults (speed 60 km/h, range 240 km, charge 25 min)
 │   ├── model.py            ← immutable frozen dataclasses (Scenario, Bus, BusPlan, etc.)
 │   ├── physics.py          ← travel time arithmetic, minutes→HH:MM formatter
@@ -273,9 +272,9 @@ bus-charging-scheduler/
 
 | Rule | What it measures | Weight key |
 |------|-----------------|------------|
-| S1 IndividualWaitRule | `w × Σ(wait per bus)` — minimise total queue time | `individual` |
-| S2 OperatorRule | `w × Σ(fleet variance)` — equalise wait within each operator | `operator` |
-| S3 OverallRule | `w × makespan` — compress total operation window | `overall` |
+| S1 IndividualWaitRule | `w × Σ(wait per bus)` - minimise total queue time | `individual` |
+| S2 OperatorRule | `w × Σ(fleet variance)` - equalise wait within each operator | `operator` |
+| S3 OverallRule | `w × makespan` - compress total operation window | `overall` |
 
 ---
 
@@ -298,17 +297,17 @@ All **103 tests** pass. Key assertions:
 
 ```
 app.py (Streamlit entry)
-  └── frontend/        — sidebar, tabs, CSS, icons
-        └── adapters   — engine output → DataFrames (only pandas user)
-              └── scheduler/engine  — greedy scheduler
-                    ├── plans.py    — enumerate feasible charging plans
-                    ├── resources.py— ChargerPool (H3 enforcement)
-                    ├── objective.py— generic rule scorer
-                    └── rules/      — pluggable hard + soft rules
+  └── frontend/        - sidebar, tabs, CSS, icons
+        └── adapters   - engine output → DataFrames (only pandas user)
+              └── scheduler/engine  - greedy scheduler
+                    ├── plans.py    - enumerate feasible charging plans
+                    ├── resources.py- ChargerPool (H3 enforcement)
+                    ├── objective.py- generic rule scorer
+                    └── rules/      - pluggable hard + soft rules
                           └── [drop a file + @register → autodiscovered]
 
 Lower layers never import higher layers.
-scheduler/* has zero Streamlit imports — runs headless from the CLI.
+scheduler/* has zero Streamlit imports - runs headless from the CLI.
 ```
 
 Full diagram with data flow: see `ARCHITECTURE.md` and the **Architecture** tab in the app.
@@ -321,15 +320,15 @@ All assumptions are documented in `ARCHITECTURE.md § Assumptions` with reasonin
 
 | Assumption | Value |
 |------------|-------|
-| Travel speed | 60 km/h constant (100 km = 100 min — clean arithmetic) |
+| Travel speed | 60 km/h constant (100 km = 100 min - clean arithmetic) |
 | Charge duration | Always exactly 25 minutes, always to full |
 | Endpoints | Bengaluru and Kochi are not charging stations |
-| Scheduling | Greedy (locally optimal per bus) — not globally optimal |
+| Scheduling | Greedy (locally optimal per bus) - not globally optimal |
 | Tie-break | Priority DESC → departure\_min ASC → bus ID ASC |
-| Clock | Minutes from midnight — no midnight-wrap bugs (e.g. 01:00 = 1500 min) |
+| Clock | Minutes from midnight - no midnight-wrap bugs (e.g. 01:00 = 1500 min) |
 
 ---
 
 ## Built by
 
-**[rhythmitaliya](https://github.com/RhythmItaliya)** — Python · Streamlit · rich
+**[rhythmitaliya](https://github.com/RhythmItaliya)** - Python · Streamlit · rich
