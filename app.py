@@ -1,17 +1,3 @@
-"""
-app.py — Entry point for the Bus Charging Scheduler Streamlit app.
-
-This file is intentionally thin: it wires the frontend/ UI layer to the
-scheduler/ engine layer.  All rendering logic lives in frontend/, all
-scheduling logic lives in scheduler/.
-
-Layer rule: app.py → frontend/ → scheduler/ (no reverse imports).
-
-References:
-    docs/05-frontend/01-frontend-flow.md   (UX flow)
-    docs/01-architecture/01-system-architecture.md (layer rule)
-"""
-
 from __future__ import annotations
 
 from dataclasses import replace
@@ -32,7 +18,6 @@ from frontend.sidebar import render_sidebar
 from frontend.tabs import render_input_tab, render_bus_tab, render_station_tab, render_architecture_tab
 from frontend.sidebar import render_sidebar_score
 
-# ── Page config — must be the FIRST Streamlit call ───────────────────────────
 
 st.set_page_config(
     page_title=CONFIG.page_title,
@@ -41,15 +26,11 @@ st.set_page_config(
     initial_sidebar_state=CONFIG.sidebar_state,
 )
 
-# ── Inject global CSS (icons, colours, tab SVGs) ─────────────────────────────
 
 inject_css()
 
-# ── Sidebar — returns user selections ────────────────────────────────────────
 
 selected_path, w_individual, w_operator, w_overall, _score_slot = render_sidebar()
-
-# ── Cached scheduler ──────────────────────────────────────────────────────────
 
 
 @st.cache_data(show_spinner="Scheduling…")
@@ -59,14 +40,6 @@ def _cached_schedule(
     w_op: float,
     w_all: float,
 ) -> Tuple[Scenario, ScheduleResult, list]:
-    """Load scenario, apply weight overrides, schedule, and validate.
-
-    Cached by (path, w_ind, w_op, w_all) so reselecting the same
-    scenario + weights is instant; recomputes only on change.
-
-    Returns:
-        (scenario, result, violations) — violations is [] for valid schedules.
-    """
     log.separator("Scheduler run")
     log.info(
         "User triggered schedule",
@@ -87,14 +60,14 @@ def _cached_schedule(
     result = schedule(scenario)
     violations = validate(result, scenario)
 
-    # Log the weight application
+
     log.info(
         "Weights applied",
         individual=w_ind,
         operator=w_op,
         overall=w_all,
     )
-    # Log the full objective summary
+
     log.separator("Objective breakdown")
     for rule_name, val in result.objective_breakdown.items():
         log.metric(rule_name, value=round(val, 2))
@@ -102,8 +75,6 @@ def _cached_schedule(
 
     return scenario, result, violations
 
-
-# ── Run scheduler ─────────────────────────────────────────────────────────────
 
 try:
     scenario, result, violations = _cached_schedule(
@@ -118,10 +89,9 @@ except RuntimeError as exc:
     st.error(f"**Engine error:** {exc}")
     st.stop()
 
-# ── Live score fills the placeholder slot right below the sliders ────────────
+
 render_sidebar_score(result, _score_slot)
 
-# ── Validation banner — always visible above tabs ─────────────────────────────
 
 _IL = "icon-label"
 
@@ -148,7 +118,6 @@ else:
         unsafe_allow_html=True,
     )
 
-# ── Tabs ─────────────────────────────────────────────────────────────────────
 
 tab_input, tab_bus, tab_station, tab_arch = st.tabs([
     "Input",

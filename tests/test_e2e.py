@@ -1,17 +1,3 @@
-"""
-tests/test_e2e.py — End-to-end tests: load and schedule all five scenarios.
-
-Covers:
-  • validate() returns [] for all five scenarios (zero violations).
-  • Every through-bus (BK or KB) has ≥ 2 charge events.
-  • Every bus has a final arrival time.
-  • Determinism: identical scenario → identical ScheduleResult (when serialised).
-
-References:
-    docs/07-testing/01-testing-plan.md (test_e2e.py requirements)
-    scheduler/engine.py, scheduler/validate.py
-"""
-
 import json
 import pytest
 
@@ -31,14 +17,9 @@ ALL_SCENARIOS = [
 
 
 class TestAllScenariosScheduleCleanly:
-    """End-to-end green tests for all five scenarios."""
 
     @pytest.mark.parametrize("path", ALL_SCENARIOS)
     def test_no_validation_violations(self, path):
-        """
-        The gold-standard acceptance test: schedule the scenario and assert
-        validate() returns an empty violation list.
-        """
         scenario = load_scenario(path)
         result = schedule(scenario)
         violations = validate(result, scenario)
@@ -48,10 +29,6 @@ class TestAllScenariosScheduleCleanly:
 
     @pytest.mark.parametrize("path", ALL_SCENARIOS)
     def test_every_through_bus_has_at_least_2_charges(self, path):
-        """
-        Every BK and KB through-bus must have ≥ 2 charge events.
-        540 km trip with 240 km range is physically impossible with < 2 charges.
-        """
         scenario = load_scenario(path)
         result = schedule(scenario)
 
@@ -63,7 +40,6 @@ class TestAllScenariosScheduleCleanly:
 
     @pytest.mark.parametrize("path", ALL_SCENARIOS)
     def test_every_bus_has_arrival_time(self, path):
-        """Every BusPlan must have a positive arrival_min."""
         scenario = load_scenario(path)
         result = schedule(scenario)
         for bp in result.bus_plans:
@@ -73,7 +49,6 @@ class TestAllScenariosScheduleCleanly:
 
     @pytest.mark.parametrize("path", ALL_SCENARIOS)
     def test_bus_count_matches_scenario(self, path):
-        """The number of BusPlan objects must equal the number of buses in the scenario."""
         scenario = load_scenario(path)
         result = schedule(scenario)
         assert len(result.bus_plans) == len(scenario.buses), (
@@ -82,12 +57,11 @@ class TestAllScenariosScheduleCleanly:
 
     @pytest.mark.parametrize("path", ALL_SCENARIOS)
     def test_station_order_covers_expected_nodes(self, path):
-        """station_order must be non-empty and every recorded node must be intermediate."""
         scenario = load_scenario(path)
         result = schedule(scenario)
-        # At least some charges must have been allocated
+
         assert len(result.station_order) > 0, "station_order is empty — no buses were charged"
-        # Every key in station_order must be a valid intermediate node
+
         for node in result.station_order:
             assert node in scenario.intermediate_nodes, (
                 f"station_order contains '{node}' which is not an intermediate node"
@@ -95,7 +69,6 @@ class TestAllScenariosScheduleCleanly:
 
     @pytest.mark.parametrize("path", ALL_SCENARIOS)
     def test_objective_breakdown_has_all_three_terms(self, path):
-        """The objective breakdown must have entries for all three soft rules."""
         scenario = load_scenario(path)
         result = schedule(scenario)
         bd = result.objective_breakdown
@@ -105,19 +78,14 @@ class TestAllScenariosScheduleCleanly:
 
 
 class TestDeterminism:
-    """Scheduling twice with identical input must produce identical results."""
 
     @pytest.mark.parametrize("path", ALL_SCENARIOS)
     def test_schedule_is_deterministic(self, path):
-        """
-        Run the scheduler twice on the same scenario; results must be identical.
-        Tests reproducible tie-breaking and stable output for demos and golden tests.
-        """
         scenario = load_scenario(path)
         result1 = schedule(scenario)
         result2 = schedule(scenario)
 
-        # Compare bus plans by serialising to comparable dicts
+
         def plan_to_dict(bp):
             return {
                 "bus_id": bp.bus_id,
@@ -132,16 +100,13 @@ class TestDeterminism:
 
 
 class TestAdapterIntegration:
-    """Smoke-test the adapter layer with real schedule output."""
 
     def test_input_table_has_correct_row_count(self):
-        """Input table must have one row per bus."""
         scenario = load_scenario("data/scenarios/scenario_1.json")
         df = to_input_table(scenario)
         assert len(df) == len(scenario.buses)
 
     def test_bus_table_has_charge_events(self):
-        """Bus table must have rows for charge events."""
         scenario = load_scenario("data/scenarios/scenario_1.json")
         result = schedule(scenario)
         df = to_bus_table(result, scenario)
@@ -150,10 +115,9 @@ class TestAdapterIntegration:
         assert "Bus ID" in df.columns
 
     def test_station_table_for_each_node(self):
-        """Each intermediate station table should have at least some rows."""
         scenario = load_scenario("data/scenarios/scenario_1.json")
         result = schedule(scenario)
         for node in scenario.intermediate_nodes:
             df = to_station_table(result, node)
-            # Station may have no charges (if never visited), but table must be valid
+
             assert df is not None

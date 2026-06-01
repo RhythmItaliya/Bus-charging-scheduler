@@ -1,15 +1,3 @@
-"""
-frontend/tabs.py — Three main tab views for the Bus Charging Scheduler UI.
-
-Public functions (one per tab):
-    render_input_tab(scenario, result, selected_path, w_individual, w_operator, w_overall)
-    render_bus_tab(scenario, result)
-    render_station_tab(scenario, result)
-
-Each function is self-contained: it receives only the data it needs and
-renders into the Streamlit context (must be called inside a ``with tab:`` block).
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,15 +10,10 @@ from scheduler.model import Scenario, ScheduleResult
 from scheduler.rules.registry import get_registry
 from frontend.icons import icon
 
-_IL = "icon-label"  # CSS class defined in styles.inject_css()
+_IL = "icon-label"
 
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
 
 def _icon_header(level: int, icon_name: str, label: str) -> None:
-    """Render an h2/h3 heading with an SVG icon."""
     sz = 20 if level == 2 else 17
     st.markdown(
         f'<h{level} style="display:flex;align-items:center;gap:6px;'
@@ -41,7 +24,6 @@ def _icon_header(level: int, icon_name: str, label: str) -> None:
 
 
 def _icon_label(icon_name: str, label: str, small: bool = False) -> None:
-    """Render an inline icon-label span."""
     style = "font-size:0.82rem;color:#555" if small else "font-weight:600"
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:5px;{style};margin:4px 0">'
@@ -51,11 +33,6 @@ def _icon_label(icon_name: str, label: str, small: bool = False) -> None:
 
 
 def _highlight_wait(col):
-    """Pandas Styler function: colour-code the Wait (min) column.
-
-    Yellow  = wait >= CONFIG.wait_warn_min (moderate queue).
-    Red     = wait >  CONFIG.wait_crit_min (long queue).
-    """
     if col.name != "Wait (min)":
         return [""] * len(col)
     styles = []
@@ -70,10 +47,6 @@ def _highlight_wait(col):
     return styles
 
 
-# ---------------------------------------------------------------------------
-# Tab 1 — Input
-# ---------------------------------------------------------------------------
-
 def render_input_tab(
     scenario: Scenario,
     result: ScheduleResult,
@@ -82,7 +55,6 @@ def render_input_tab(
     w_operator: float,
     w_overall: float,
 ) -> None:
-    """Render the Input tab: bus roster, world constants, route, stations, expanders."""
     _icon_header(3, "clipboard", scenario.name)
 
     col1, col2 = st.columns([3, 1])
@@ -105,7 +77,7 @@ def render_input_tab(
             "overall": w_overall,
         })
 
-    # Route
+
     _icon_label("route", "Route")
     route_str = " → ".join(scenario.route.nodes)
     segments_str = " | ".join(
@@ -114,12 +86,12 @@ def render_input_tab(
     )
     st.info(f"**{route_str}**\n\n{segments_str}")
 
-    # Stations
+
     _icon_label("plug", "Stations")
     for node, stn in sorted(scenario.stations.items()):
         st.caption(f"• {node}: {stn.num_chargers} charger(s)")
 
-    # Expanders
+
     with st.expander("Raw scenario JSON", expanded=False):
         st.code(Path(selected_path).read_text(encoding="utf-8"), language="json")
 
@@ -131,12 +103,7 @@ def render_input_tab(
             st.metric(label=rule_name, value=val)
 
 
-# ---------------------------------------------------------------------------
-# Tab 2 — Per-bus timetable
-# ---------------------------------------------------------------------------
-
 def render_bus_tab(scenario: Scenario, result: ScheduleResult) -> None:
-    """Render the Per-Bus Timetable tab: styled dataframe + four summary metrics."""
     _icon_header(3, "bus", "Per-Bus Charging Timetable")
     st.caption(
         f"Every row is one charge stop. "
@@ -150,7 +117,7 @@ def render_bus_tab(scenario: Scenario, result: ScheduleResult) -> None:
 
     st.divider()
 
-    # Summary metrics
+
     total_wait = sum(bp.total_wait for bp in result.bus_plans)
     max_wait   = max((bp.total_wait for bp in result.bus_plans), default=0)
     arrivals   = [bp.arrival_min for bp in result.bus_plans]
@@ -165,7 +132,6 @@ def render_bus_tab(scenario: Scenario, result: ScheduleResult) -> None:
 
 
 def _metric_col(col, icon_name: str, label: str, value, sub: str) -> None:
-    """Render an SVG icon label above a metric inside a column."""
     with col:
         st.markdown(
             f'<div style="display:flex;align-items:center;gap:4px;'
@@ -176,12 +142,7 @@ def _metric_col(col, icon_name: str, label: str, value, sub: str) -> None:
         st.metric(label=sub, value=value)
 
 
-# ---------------------------------------------------------------------------
-# Tab 3 — Per-station order
-# ---------------------------------------------------------------------------
-
 def render_station_tab(scenario: Scenario, result: ScheduleResult) -> None:
-    """Render the Per-Station Order tab: one expander per intermediate station."""
     _icon_header(3, "zap", "Per-Station Charge Order")
     st.caption(
         "Buses at each station sorted by charge start time. "
@@ -206,10 +167,6 @@ def render_station_tab(scenario: Scenario, result: ScheduleResult) -> None:
             else:
                 st.dataframe(stn_df, width='stretch', hide_index=True)
 
-
-# ---------------------------------------------------------------------------
-# Tab 4 — Architecture
-# ---------------------------------------------------------------------------
 
 _SYSTEM_DIAGRAM = """\
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
@@ -314,23 +271,22 @@ _VALID_PLANS_NOTE = """\
 
 
 def render_architecture_tab(scenario: Scenario, result: ScheduleResult) -> None:
-    """Render the Architecture tab: full system diagram, data flow, and rule registry."""
     _icon_header(3, "settings", "System Architecture")
     st.caption("Full system structure, data flow, scheduling algorithm, and rule registry.")
 
-    # ── Full system diagram ───────────────────────────────────────────────────
+
     with st.expander("Full system diagram", expanded=True):
         st.code(_SYSTEM_DIAGRAM, language=None)
 
-    # ── Data flow ─────────────────────────────────────────────────────────────
+
     with st.expander("Data flow (one scheduling run)", expanded=False):
         st.code(_DATA_FLOW, language=None)
 
-    # ── Valid charging plans ──────────────────────────────────────────────────
+
     with st.expander("Valid charging plans (range analysis)", expanded=False):
         st.code(_VALID_PLANS_NOTE, language=None)
 
-    # ── Live rule registry ────────────────────────────────────────────────────
+
     with st.expander("Live rule registry", expanded=False):
         registry = get_registry()
         st.markdown("**Hard rules** (feasibility gates — return `math.inf` on violation):")
@@ -345,7 +301,7 @@ def render_architecture_tab(scenario: Scenario, result: ScheduleResult) -> None:
             "No engine edits needed — autodiscovery picks it up automatically."
         )
 
-    # ── Current scenario data model ───────────────────────────────────────────
+
     with st.expander("Current scenario data model", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
@@ -371,14 +327,14 @@ def render_architecture_tab(scenario: Scenario, result: ScheduleResult) -> None:
                 for node, stn in sorted(scenario.stations.items())
             })
 
-    # ── Objective breakdown ───────────────────────────────────────────────────
+
     with st.expander("Objective breakdown (current schedule)", expanded=False):
         st.caption("Lower is better. All hard-rule violations are caught before this stage.")
         for rule_name, val in result.objective_breakdown.items():
             st.metric(label=rule_name, value=round(val, 2))
         st.metric(label="TOTAL", value=round(result.total_objective, 2))
 
-    # ── Anticipated changes ───────────────────────────────────────────────────
+
     with st.expander("Anticipated changes — handled by data alone", expanded=False):
         import pandas as pd
         changes = [

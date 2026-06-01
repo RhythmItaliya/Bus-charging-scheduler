@@ -1,20 +1,3 @@
-"""
-scheduler/adapters.py — Transforms engine output into Streamlit-ready DataFrames.
-
-This is the ONLY layer allowed to know about pandas, HH:MM formatting, and
-column display names.  The engine and rules remain format-agnostic (minutes only).
-
-Public API (docs/04-api-contracts/01-internal-api-contracts.md):
-    to_input_table(scenario)              -> DataFrame  (bus roster + world summary)
-    to_bus_table(result, scenario)        -> DataFrame  (per-bus timetable)
-    to_station_table(result, node)        -> DataFrame  (per-station charge order)
-
-References:
-    docs/05-frontend/01-frontend-flow.md   (the three views)
-    docs/05-frontend/02-ui-components.md   (component acceptance criteria)
-    docs/04-api-contracts/01-internal-api-contracts.md
-"""
-
 from __future__ import annotations
 
 import pandas as pd
@@ -23,25 +6,7 @@ from scheduler.model import Scenario, ScheduleResult
 from scheduler.physics import minutes_to_hhmm
 
 
-# ---------------------------------------------------------------------------
-# Input table
-# ---------------------------------------------------------------------------
-
 def to_input_table(scenario: Scenario) -> pd.DataFrame:
-    """
-    Build the bus roster DataFrame for the Input tab.
-
-    Columns: Bus ID | Operator | Direction | Departure (HH:MM) | Range (km) | Priority
-
-    The direction is derived from origin/destination against the route so it is
-    never hardcoded — adding a new route direction works automatically.
-
-    Args:
-        scenario: The fully-loaded scenario.
-
-    Returns:
-        A pandas DataFrame with one row per bus, sorted by departure time.
-    """
     nodes = list(scenario.route.nodes)
 
     rows = []
@@ -62,29 +27,7 @@ def to_input_table(scenario: Scenario) -> pd.DataFrame:
     return df
 
 
-# ---------------------------------------------------------------------------
-# Per-bus timetable
-# ---------------------------------------------------------------------------
-
 def to_bus_table(result: ScheduleResult, scenario: Scenario) -> pd.DataFrame:
-    """
-    Build the per-bus timetable DataFrame for the Per-bus tab.
-
-    One row per (bus, charge_event) pair, plus a summary row for final arrival.
-    Non-zero waits are surfaced in a dedicated column so Streamlit can highlight them.
-
-    Columns:
-        Bus ID | Operator | Dir | Station | Arrive | Wait (min) | Start | End | Arrival
-
-    The "Arrival" column is populated only on the last row for each bus.
-
-    Args:
-        result:   The ScheduleResult from the engine.
-        scenario: The scenario (used to derive direction).
-
-    Returns:
-        A pandas DataFrame sorted by bus departure then station.
-    """
     nodes = list(scenario.route.nodes)
     rows = []
 
@@ -110,7 +53,7 @@ def to_bus_table(result: ScheduleResult, scenario: Scenario) -> pd.DataFrame:
                 "Total Wait": str(bp.total_wait) if is_last else "",
             })
 
-        # If a bus somehow has no charge events (should be caught by validator)
+
         if not bp.charge_events:
             rows.append({
                 "Bus ID": bp.bus_id,
@@ -129,26 +72,7 @@ def to_bus_table(result: ScheduleResult, scenario: Scenario) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------------------
-# Per-station view
-# ---------------------------------------------------------------------------
-
 def to_station_table(result: ScheduleResult, node: str) -> pd.DataFrame:
-    """
-    Build the charge-order DataFrame for a single station.
-
-    Rows are sorted by charge start time so a reviewer can judge whether the
-    ordering is sensible given the active weights.
-
-    Columns: Order | Bus ID | Operator | Charger # | Arrive | Wait (min) | Start | End
-
-    Args:
-        result: The ScheduleResult from the engine.
-        node:   The station node name (e.g. "A", "B", "C", "D").
-
-    Returns:
-        A pandas DataFrame for this station, or empty DataFrame if no charges occurred.
-    """
     slots = result.station_order.get(node, [])
     if not slots:
         return pd.DataFrame(columns=[
@@ -158,7 +82,7 @@ def to_station_table(result: ScheduleResult, node: str) -> pd.DataFrame:
 
     rows = []
     for i, slot in enumerate(slots, start=1):
-        # Look up arrive_min from the bus plan
+
         arrive_str = "—"
         for bp in result.bus_plans:
             if bp.bus_id == slot.bus_id:
@@ -172,7 +96,7 @@ def to_station_table(result: ScheduleResult, node: str) -> pd.DataFrame:
             "Order": i,
             "Bus ID": slot.bus_id,
             "Operator": slot.operator.upper(),
-            "Charger #": slot.charger_index + 1,  # 1-indexed for display
+            "Charger #": slot.charger_index + 1,
             "Arrive": arrive_str,
             "Wait (min)": slot.wait_min,
             "Charge Start": minutes_to_hhmm(slot.start_min),

@@ -1,11 +1,3 @@
-"""
-tests/conftest.py — Shared fixtures and helpers for all test modules.
-
-Helpers defined here are available to every test file in this directory via
-pytest's automatic conftest discovery.  They provide the canonical Bengaluru–Kochi
-scenario and a charge-event factory used across multiple test files.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -25,28 +17,12 @@ from scheduler.model import (
 from scheduler.rules.registry import ScheduleContext
 
 
-# ---------------------------------------------------------------------------
-# Scenario builder
-# ---------------------------------------------------------------------------
-
 def build_scenario(
     weights: Weights | None = None,
     battery_range_km: float = 240.0,
     include_kb: bool = False,
     num_chargers: int = 1,
 ) -> Scenario:
-    """
-    Build the canonical Bengaluru→Kochi scenario programmatically.
-
-    Args:
-        weights:          Custom Weights object; defaults to all-ones.
-        battery_range_km: Battery range override (default 240 km).
-        include_kb:       When True, adds one KB (Kochi→Bengaluru) bus.
-        num_chargers:     Charger count for all stations (default 1).
-
-    Returns:
-        A ready-to-use Scenario with one BK bus (plus one KB if requested).
-    """
     route = Route(
         nodes=("Bengaluru", "A", "B", "C", "D", "Kochi"),
         segments=(
@@ -77,10 +53,6 @@ def build_scenario(
     )
 
 
-# ---------------------------------------------------------------------------
-# Charge-event factory
-# ---------------------------------------------------------------------------
-
 def make_event(
     station: str,
     arrive: int,
@@ -89,17 +61,6 @@ def make_event(
     end: int | None = None,
     charger: int = 0,
 ) -> dict:
-    """
-    Build a charge-event dict (the shape used inside _simulate_plan and rules).
-
-    Args:
-        station: Station node name (e.g. "A").
-        arrive:  Arrival minute.
-        wait:    Wait minutes (start - arrive).
-        start:   Charge-start minute; defaults to arrive + wait.
-        end:     Charge-end minute; defaults to start + 25.
-        charger: Charger slot index (0-indexed).
-    """
     if start is None:
         start = arrive + wait
     if end is None:
@@ -114,17 +75,11 @@ def make_event(
     }
 
 
-# ---------------------------------------------------------------------------
-# pytest fixtures (dependency-injected into test functions/methods)
-# ---------------------------------------------------------------------------
-
 @pytest.fixture
 def canonical_scenario() -> Scenario:
-    """Single BK bus, all-ones weights, 240 km range."""
     return build_scenario()
 
 
 @pytest.fixture
 def canonical_scenario_with_kb() -> Scenario:
-    """One BK bus + one KB bus, all-ones weights."""
     return build_scenario(include_kb=True)

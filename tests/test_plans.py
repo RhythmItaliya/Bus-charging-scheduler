@@ -1,35 +1,13 @@
-"""
-tests/test_plans.py — Unit tests for candidate plan enumeration.
-
-Covers:
-  • No candidate plan has a leg > 240 km.
-  • Through-buses require ≥ 2 charges (since 540 km > 240 km range).
-  • The ONLY valid 2-charge BK plans are {A,C}, {B,C}, {B,D}  (spec-verified).
-  • Route order is preserved in every plan.
-  • KB direction enumerates the mirrored station order.
-  • An impossible range (e.g. 90 km) yields no feasible plans.
-
-References:
-    docs/07-testing/01-testing-plan.md (test_plans.py requirements)
-    docs/00-requirements/01-requirements-analysis.md §4 (feasibility sets)
-    scheduler/plans.py
-"""
-
 import pytest
 from scheduler.loader import load_scenario
 from scheduler.model import Bus, Scenario, Segment, Station, Weights, World, Route
 from scheduler.plans import candidate_plans, downstream_stations
 
 
-# ---------------------------------------------------------------------------
-# Helper: build a minimal BK-direction Scenario programmatically
-# ---------------------------------------------------------------------------
-
 def _make_scenario(
     battery_range_km: float = 240.0,
     num_chargers: int = 1,
 ) -> Scenario:
-    """Build the canonical Bengaluru–Kochi scenario for plan tests."""
     route = Route(
         nodes=("Bengaluru", "A", "B", "C", "D", "Kochi"),
         segments=(
@@ -67,7 +45,6 @@ def _make_scenario(
 
 
 class TestDownstreamStations:
-    """Test which stations are eligible for each bus direction."""
 
     def test_bk_bus_has_all_four_stations(self):
         scenario = _make_scenario()
@@ -83,10 +60,8 @@ class TestDownstreamStations:
 
 
 class TestCandidatePlans:
-    """Test range-feasibility filtering and completeness of plan enumeration."""
 
     def test_no_plan_exceeds_range(self):
-        """Every leg in every candidate plan must be ≤ 240 km."""
         scenario = _make_scenario()
         bus = next(b for b in scenario.buses if b.id == "bus-BK-01")
         plans = candidate_plans(bus, scenario)
@@ -102,7 +77,6 @@ class TestCandidatePlans:
                 )
 
     def test_through_bus_requires_at_least_2_charges(self):
-        """All feasible BK plans have ≥ 2 stations (since 540 km > 240 km range)."""
         scenario = _make_scenario()
         bus = next(b for b in scenario.buses if b.id == "bus-BK-01")
         plans = candidate_plans(bus, scenario)
@@ -111,12 +85,6 @@ class TestCandidatePlans:
             assert len(plan) >= 2, f"Plan {plan} has fewer than 2 charges"
 
     def test_valid_two_charge_bk_plans_are_exactly_abc_bc_bd(self):
-        """
-        The only valid 2-charge BK plans are {A,C}, {B,C}, {B,D}.
-        {A,D} is invalid because A→D = 340 km > 240 km.
-
-        Spec reference: docs/00-requirements/01-requirements-analysis.md §4.
-        """
         scenario = _make_scenario()
         bus = next(b for b in scenario.buses if b.id == "bus-BK-01")
         plans = candidate_plans(bus, scenario)
@@ -127,14 +95,12 @@ class TestCandidatePlans:
         )
 
     def test_ad_plan_is_not_feasible(self):
-        """A→D = 340 km exceeds 240 km range — must be excluded."""
         scenario = _make_scenario()
         bus = next(b for b in scenario.buses if b.id == "bus-BK-01")
         plans = candidate_plans(bus, scenario)
         assert ("A", "D") not in plans, "Plan {A,D} is infeasible (leg A→D = 340 km)"
 
     def test_route_order_preserved_in_all_plans(self):
-        """Plans must be strictly increasing in position (no backtracking)."""
         scenario = _make_scenario()
         bus = next(b for b in scenario.buses if b.id == "bus-BK-01")
         plans = candidate_plans(bus, scenario)
@@ -147,7 +113,6 @@ class TestCandidatePlans:
                 )
 
     def test_kb_plans_are_in_reversed_order(self):
-        """KB bus station order should be decreasing in original route positions."""
         scenario = _make_scenario()
         bus = next(b for b in scenario.buses if b.id == "bus-KB-01")
         plans = candidate_plans(bus, scenario)
@@ -161,13 +126,12 @@ class TestCandidatePlans:
                 )
 
     def test_impossible_range_yields_no_plans(self):
-        """A bus with 90 km range cannot make any feasible plan (first station is 100 km away)."""
         scenario = _make_scenario(battery_range_km=90.0)
         bus = next(b for b in scenario.buses if b.id == "bus-BK-01")
-        # Override range on the bus object
+
         from dataclasses import replace
         bus_90 = replace(bus, range_km=90.0)
-        # Rebuild scenario with this bus
+
         from scheduler.model import Scenario as S
         s2 = S(
             name="impossible",

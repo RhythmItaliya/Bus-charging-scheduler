@@ -1,21 +1,3 @@
-"""
-scheduler/loader.py — Scenario discovery and hydration.
-
-This module is the trust boundary for all incoming data.  After the loader
-returns a Scenario, all downstream code (engine, rules, adapter) can assume:
-  • All distances are positive.
-  • All station nodes are intermediate route nodes.
-  • All buses have valid operators and non-negative departure times.
-  • Route segments are contiguous.
-
-Any structural violation raises ValueError with an actionable message that
-names the offending field (docs/04-api-contracts/02-validation-rules.md §input).
-
-Public API (docs/04-api-contracts/01-internal-api-contracts.md):
-    list_scenarios(directory) -> list[tuple[str, Path]]
-    load_scenario(path)       -> Scenario
-"""
-
 from __future__ import annotations
 
 import json
@@ -35,26 +17,7 @@ from scheduler.model import (
 from scheduler.logger import log
 
 
-# ---------------------------------------------------------------------------
-# Discovery
-# ---------------------------------------------------------------------------
-
 def list_scenarios(directory: str | Path) -> List[Tuple[str, Path]]:
-    """
-    Discover all scenario JSON files in a directory, sorted by filename.
-
-    Returns a list of (display_name, path) pairs where display_name comes from
-    the "name" key inside the file.  Powers the Streamlit scenario dropdown.
-
-    Args:
-        directory: Path to the directory containing scenario JSON files.
-
-    Returns:
-        Sorted list of (name, path) tuples (sorted by filename for stability).
-
-    Raises:
-        FileNotFoundError: if directory does not exist.
-    """
     base = Path(directory)
     if not base.exists():
         log.error("Scenarios directory not found", path=str(base.resolve()))
@@ -74,34 +37,11 @@ def list_scenarios(directory: str | Path) -> List[Tuple[str, Path]]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Loading and hydration
-# ---------------------------------------------------------------------------
-
 def load_scenario(path: str | Path) -> Scenario:
-    """
-    Parse, validate, and hydrate a scenario JSON file into an immutable Scenario.
-
-    Three-stage validation happens here (docs/04-api-contracts/02-validation-rules.md):
-      1. Structural JSON parse.
-      2. Field-level validation with actionable ValueError messages.
-      3. Semantic validation (route connectivity, station membership, etc.).
-
-    Args:
-        path: Path to a scenario JSON file.
-
-    Returns:
-        A fully-validated, immutable Scenario ready for the engine.
-
-    Raises:
-        ValueError:         if any field is invalid (with a descriptive message).
-        FileNotFoundError:  if the file does not exist.
-        json.JSONDecodeError: if the file is not valid JSON.
-    """
     path = Path(path)
     raw = json.loads(path.read_text(encoding="utf-8"))
 
-    # --- 1. World (physical constants; any key optional, fallback to DEFAULTS) ---
+
     world_raw = raw.get("world", {})
     world = World(
         speed_kmph=float(world_raw.get("speed_kmph", DEFAULTS["speed_kmph"])),
@@ -115,7 +55,7 @@ def load_scenario(path: str | Path) -> Scenario:
     if world.battery_range_km <= 0:
         raise ValueError(f"world.battery_range_km must be > 0, got {world.battery_range_km}")
 
-    # --- 2. Route (nodes + segments + derived positions map) ---
+
     route_raw = raw.get("route", {})
     nodes: List[str] = list(route_raw.get("nodes", []))
     if len(nodes) < 2:
@@ -123,11 +63,11 @@ def load_scenario(path: str | Path) -> Scenario:
 
     segments_raw = route_raw.get("segments", [])
     segments: List[Segment] = []
-    # Build position map: cumulative distance from nodes[0]
+
     positions: dict[str, float] = {nodes[0]: 0.0}
     running_distance = 0.0
 
-    # Validate that segments connect nodes in declared order
+
     if len(segments_raw) != len(nodes) - 1:
         raise ValueError(
             f"route.segments count ({len(segments_raw)}) must equal "
@@ -161,7 +101,7 @@ def load_scenario(path: str | Path) -> Scenario:
         positions=positions,
     )
 
-    # --- 3. Stations (only intermediate nodes; endpoints excluded) ---
+
     intermediate = set(nodes[1:-1])
     stations_raw = raw.get("stations", {})
     stations: dict[str, Station] = {}
@@ -178,12 +118,12 @@ def load_scenario(path: str | Path) -> Scenario:
             )
         stations[node] = Station(node=node, num_chargers=num_chargers)
 
-    # All intermediate nodes must have a station entry
+
     for node in intermediate:
         if node not in stations:
-            stations[node] = Station(node=node, num_chargers=1)  # default to 1
+            stations[node] = Station(node=node, num_chargers=1)
 
-    # --- 4. Weights (with extra dict for forward compatibility) ---
+
     weights_raw = raw.get("weights", {})
     known_keys = {"individual", "operator", "overall"}
     extra_weights = {k: float(v) for k, v in weights_raw.items() if k not in known_keys}
@@ -194,7 +134,7 @@ def load_scenario(path: str | Path) -> Scenario:
         extra=extra_weights,
     )
 
-    # --- 5. Buses ---
+
     buses_raw = raw.get("buses", [])
     if not buses_raw:
         raise ValueError("scenario must contain at least one bus.")

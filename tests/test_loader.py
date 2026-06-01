@@ -1,18 +1,3 @@
-"""
-tests/test_loader.py — Unit tests for the loader (the trust boundary).
-
-The loader is the only place that reads files and validates raw input.
-After it returns a Scenario, all downstream code trusts the data.
-So these tests verify every branch of the 3-stage validation:
-  Stage 1 — World constants
-  Stage 2 — Route connectivity
-  Stage 3 — Stations, weights, buses
-
-References:
-    scheduler/loader.py
-    docs/04-api-contracts/02-validation-rules.md
-"""
-
 from __future__ import annotations
 
 import json
@@ -23,22 +8,13 @@ import pytest
 from scheduler.loader import list_scenarios, load_scenario
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _write(tmp_path: Path, data: dict) -> Path:
-    """Write data as JSON to a temp file and return the path."""
     p = tmp_path / "scenario.json"
     p.write_text(json.dumps(data), encoding="utf-8")
     return p
 
 
 def _base() -> dict:
-    """
-    Minimal valid scenario dict.
-    Uses a 3-node route (Bengaluru → A → Kochi) to keep tests focused.
-    """
     return {
         "name": "Test",
         "world": {
@@ -65,32 +41,24 @@ def _base() -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# list_scenarios
-# ---------------------------------------------------------------------------
-
 class TestListScenarios:
 
     def test_finds_five_real_scenarios(self):
-        """The data/scenarios directory contains exactly 5 scenario files."""
         result = list_scenarios("data/scenarios")
         assert len(result) == 5
 
     def test_returns_name_path_tuples(self):
-        """Each element is a (str, Path) pair."""
         result = list_scenarios("data/scenarios")
         for name, path in result:
             assert isinstance(name, str)
             assert isinstance(path, Path)
 
     def test_sorted_by_filename(self):
-        """Files are returned in filename-alphabetical order (scenario_1 before scenario_2)."""
         result = list_scenarios("data/scenarios")
         filenames = [p.name for _, p in result]
         assert filenames == sorted(filenames)
 
     def test_names_come_from_json_name_field(self):
-        """Display names come from the JSON 'name' key, not from the filename."""
         result = list_scenarios("data/scenarios")
         names = [name for name, _ in result]
         assert any("Scenario" in n for n in names)
@@ -125,10 +93,6 @@ class TestListScenarios:
         assert result[0][0] == "my_test"
 
 
-# ---------------------------------------------------------------------------
-# load_scenario — Stage 1: World constants
-# ---------------------------------------------------------------------------
-
 class TestLoadScenarioWorld:
 
     def test_valid_scenario_loads_correctly(self, tmp_path):
@@ -141,7 +105,7 @@ class TestLoadScenarioWorld:
         data = _base()
         del data["world"]
         s = load_scenario(_write(tmp_path, data))
-        assert s.world.speed_kmph == 60     # from DEFAULTS
+        assert s.world.speed_kmph == 60
         assert s.world.charge_minutes == 25
         assert s.world.battery_range_km == 240
 
@@ -171,16 +135,12 @@ class TestLoadScenarioWorld:
 
     def test_partial_world_override_keeps_other_defaults(self, tmp_path):
         data = _base()
-        data["world"] = {"speed_kmph": 80}   # only override speed
+        data["world"] = {"speed_kmph": 80}
         s = load_scenario(_write(tmp_path, data))
         assert s.world.speed_kmph == 80
-        assert s.world.charge_minutes == 25  # still default
+        assert s.world.charge_minutes == 25
         assert s.world.battery_range_km == 240
 
-
-# ---------------------------------------------------------------------------
-# load_scenario — Stage 2: Route
-# ---------------------------------------------------------------------------
 
 class TestLoadScenarioRoute:
 
@@ -199,7 +159,7 @@ class TestLoadScenarioRoute:
 
     def test_segment_count_mismatch_raises(self, tmp_path):
         data = _base()
-        data["route"]["segments"] = []   # 0 segments for 3 nodes (need 2)
+        data["route"]["segments"] = []
         with pytest.raises(ValueError, match="segments"):
             load_scenario(_write(tmp_path, data))
 
@@ -236,10 +196,6 @@ class TestLoadScenarioRoute:
         assert s.intermediate_nodes == ["A"]
 
 
-# ---------------------------------------------------------------------------
-# load_scenario — Stage 3a: Stations
-# ---------------------------------------------------------------------------
-
 class TestLoadScenarioStations:
 
     def test_endpoint_as_station_raises(self, tmp_path):
@@ -272,10 +228,6 @@ class TestLoadScenarioStations:
         s = load_scenario(_write(tmp_path, data))
         assert s.stations["A"].num_chargers == 3
 
-
-# ---------------------------------------------------------------------------
-# load_scenario — Stage 3b: Weights
-# ---------------------------------------------------------------------------
 
 class TestLoadScenarioWeights:
 
@@ -311,10 +263,6 @@ class TestLoadScenarioWeights:
         s = load_scenario(_write(tmp_path, _base()))
         assert s.weights.get("nonexistent", 99.0) == 99.0
 
-
-# ---------------------------------------------------------------------------
-# load_scenario — Stage 3c: Buses
-# ---------------------------------------------------------------------------
 
 class TestLoadScenarioBuses:
 

@@ -1,27 +1,3 @@
-"""
-frontend/sidebar.py  —  Streamlit sidebar for the Bus Charging Scheduler.
-
-Renders:
-  • App title with Heroicons v2 BoltIcon
-  • Scenario dropdown (first/topmost element)
-  • Weight sliders (individual, operator, overall)
-  • Live objective score display (updates as sliders change)
-  • Reset button (restores scenario file defaults)
-
-WEIGHT SLIDER FIX:
-  When you drag a slider, the objective score below updates immediately,
-  showing exactly how the weight change affects the total penalty.
-  The banner at the top of the main area also updates.
-
-RESET BUTTON FIX:
-  Uses st.session_state[key] = value (set-values pattern) rather than
-  del st.session_state[key] (delete pattern). This is more reliable in
-  Streamlit 1.58 — setting a value always works; deletion can race with
-  Streamlit's widget re-initialisation on some versions.
-
-Returns selected_path, w_individual, w_operator, w_overall to the caller.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -35,19 +11,8 @@ from frontend.icons import icon
 
 
 def render_sidebar() -> tuple[str, float, float, float, "st.delta_generator.DeltaGenerator"]:
-    """
-    Render the full sidebar and return the user's current selections.
-
-    Returns:
-        (selected_path, w_individual, w_operator, w_overall, score_slot)
-        where score_slot is an st.empty() placeholder positioned right below
-        the sliders — fill it with render_sidebar_score(result, score_slot)
-        after scheduling is complete.
-
-    Calls st.stop() if no scenario files are found.
-    """
     with st.sidebar:
-        # ── App title ──────────────────────────────────────────────────────
+
         st.markdown(
             f'<div style="display:flex;align-items:center;gap:7px;'
             f'font-size:1.1rem;font-weight:700;margin:0 0 2px 0">'
@@ -57,7 +22,7 @@ def render_sidebar() -> tuple[str, float, float, float, "st.delta_generator.Delt
         st.caption("Bengaluru → A → B → C → D → Kochi · 540 km · 240 km range")
         st.divider()
 
-        # ── Scenario dropdown ──────────────────────────────────────────────
+
         scenarios_dir = Path(CONFIG.scenarios_dir)
         try:
             scenario_list = list_scenarios(scenarios_dir)
@@ -83,30 +48,21 @@ def render_sidebar() -> tuple[str, float, float, float, "st.delta_generator.Delt
 
         st.divider()
 
-        # ── Weight sliders ─────────────────────────────────────────────────
-        # Load the scenario's file defaults so Reset knows what to go back to.
+
         default_weights = load_scenario(selected_path).weights
 
-        # Keys scoped to scenario so switching scenario auto-resets sliders.
+
         _k_ind   = f"w_ind_{selected_name}"
         _k_op    = f"w_op_{selected_name}"
         _k_all   = f"w_all_{selected_name}"
-        _k_reset = f"_reset_{selected_name}"   # flag key for reset handshake
+        _k_reset = f"_reset_{selected_name}"
 
-        # ── RESET HANDSHAKE (must happen BEFORE sliders are created) ──────
-        # Streamlit rule: you cannot set st.session_state[widget_key] after
-        # the widget is instantiated in the same run — it raises
-        # StreamlitAPIException. The fix: use a separate flag key.
-        #
-        # Flow:
-        #   Run N   → button clicked → set _k_reset flag → st.rerun()
-        #   Run N+1 → we detect flag here (before sliders exist) → apply
-        #             defaults to slider keys → clear flag → sliders use defaults
+
         if st.session_state.get(_k_reset):
             st.session_state[_k_ind] = float(default_weights.individual)
             st.session_state[_k_op]  = float(default_weights.operator)
             st.session_state[_k_all] = float(default_weights.overall)
-            del st.session_state[_k_reset]   # clear so it only fires once
+            del st.session_state[_k_reset]
 
         st.markdown(
             f'<div style="display:flex;align-items:center;gap:6px;'
@@ -150,9 +106,7 @@ def render_sidebar() -> tuple[str, float, float, float, "st.delta_generator.Delt
             key=_k_all,
         )
 
-        # ── Reset button ──────────────────────────────────────────────────
-        # Sets the _k_reset flag and reruns.  On the NEXT run the handshake
-        # block above applies defaults before sliders are instantiated.
+
         st.markdown(
             f'<div style="display:flex;align-items:center;gap:5px;'
             f'font-size:0.82rem;color:#555;margin:8px 0 2px 0">'
@@ -160,10 +114,10 @@ def render_sidebar() -> tuple[str, float, float, float, "st.delta_generator.Delt
             unsafe_allow_html=True,
         )
         if st.button("Reset weights", use_container_width=True, key="reset_btn"):
-            st.session_state[_k_reset] = True   # flag — applied next run
+            st.session_state[_k_reset] = True
             st.rerun()
 
-        # ── Active weights readout ────────────────────────────────────────
+
         st.markdown(
             f'<div style="display:flex;align-items:center;gap:5px;'
             f'font-size:0.82rem;color:#555;margin:6px 0 2px 0">'
@@ -174,11 +128,7 @@ def render_sidebar() -> tuple[str, float, float, float, "st.delta_generator.Delt
             unsafe_allow_html=True,
         )
 
-        # ── Score placeholder ─────────────────────────────────────────────
-        # This empty slot is positioned directly below the sliders.
-        # render_sidebar_score() fills it after scheduling completes so the
-        # user sees the objective score update immediately when dragging a slider,
-        # without needing to scroll the sidebar.
+
         score_slot = st.empty()
 
     return selected_path, w_individual, w_operator, w_overall, score_slot
@@ -188,24 +138,12 @@ def render_sidebar_score(
     result: ScheduleResult,
     score_slot: "st.delta_generator.DeltaGenerator",
 ) -> None:
-    """
-    Fill the score_slot placeholder (returned by render_sidebar) with the
-    live objective score breakdown.
-
-    The slot is positioned directly below the weight sliders, so dragging
-    any slider causes an immediate, visible score update — no scrolling needed.
-
-    Why a placeholder?  render_sidebar() runs before scheduling, so we cannot
-    show the score there.  We reserve the slot, schedule, then fill it here.
-    The score updates on every slider change because st.cache_data misses on
-    new (path, w_ind, w_op, w_all) and produces a fresh ScheduleResult.
-    """
     breakdown = result.objective_breakdown
     total     = result.total_objective
 
     with score_slot.container():
         st.markdown("---")
-        # Large primary score — this is the number users watch change
+
         st.markdown(
             f'<div style="display:flex;align-items:center;gap:5px;'
             f'font-size:0.82rem;font-weight:600;margin:2px 0 4px 0;color:#374151">'
@@ -220,7 +158,7 @@ def render_sidebar_score(
             help="S1 (individual wait) + S2 (operator variance) + S3 (makespan). "
                  "Drag the sliders above — this number updates immediately.",
         )
-        # Three mini metrics showing each rule's share
+
         c1, c2, c3 = st.columns(3)
         c1.metric("Ind", f"{breakdown.get('IndividualWaitRule', 0):,.0f}",
                   help="IndividualWaitRule contribution")

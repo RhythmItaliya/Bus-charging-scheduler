@@ -1,19 +1,3 @@
-"""
-tests/test_adapters.py — Unit tests for the adapter layer (engine → DataFrame).
-
-The adapter layer is the ONLY place that knows about pandas, HH:MM formatting,
-and column display names.  These tests verify:
-  • Column sets and row counts are correct.
-  • Time values are always formatted as HH:MM.
-  • Wait (min) values are non-negative integers.
-  • Per-bus summary fields (Final Arrival, Total Wait) appear exactly once per bus.
-  • Station table is sorted, 1-indexed, and handles the empty case.
-
-References:
-    scheduler/adapters.py
-    docs/04-api-contracts/01-internal-api-contracts.md
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -23,17 +7,9 @@ from scheduler.engine import schedule
 from scheduler.loader import load_scenario
 
 
-# ---------------------------------------------------------------------------
-# Module-level result (computed once, shared across all tests in this file)
-# ---------------------------------------------------------------------------
-
 _SCENARIO = load_scenario("data/scenarios/scenario_1.json")
 _RESULT = schedule(_SCENARIO)
 
-
-# ---------------------------------------------------------------------------
-# to_input_table
-# ---------------------------------------------------------------------------
 
 class TestToInputTable:
 
@@ -43,7 +19,7 @@ class TestToInputTable:
 
     def test_required_columns_present(self):
         df = to_input_table(_SCENARIO)
-        assert {"Bus ID", "Operator", "Direction", "Departure", "Range (km)", "Priority"} \
+        assert {"Bus ID", "Operator", "Direction", "Departure", "Range (km)", "Priority"}\
             .issubset(set(df.columns))
 
     def test_departure_is_hhmm_format(self):
@@ -79,15 +55,11 @@ class TestToInputTable:
             assert isinstance(p, (int,)), f"Priority {p!r} is not an int"
 
 
-# ---------------------------------------------------------------------------
-# to_bus_table
-# ---------------------------------------------------------------------------
-
 class TestToBusTable:
 
     def test_at_least_one_row_per_bus(self):
         df = to_bus_table(_RESULT, _SCENARIO)
-        # Each bus with 2 charges → 2 rows; so total >= bus count
+
         assert len(df) >= len(_RESULT.bus_plans)
 
     def test_required_columns_present(self):
@@ -152,10 +124,6 @@ class TestToBusTable:
                 assert s in intermediate, f"Unknown station {s!r} in bus table"
 
 
-# ---------------------------------------------------------------------------
-# to_station_table
-# ---------------------------------------------------------------------------
-
 class TestToStationTable:
 
     def test_nonexistent_node_returns_empty_df(self):
@@ -177,7 +145,6 @@ class TestToStationTable:
         assert list(df["Order"]) == list(range(1, len(df) + 1))
 
     def test_charger_is_one_indexed(self):
-        """Charger # must be ≥ 1 (we add 1 to the 0-indexed charger_index)."""
         df = to_station_table(_RESULT, "A")
         assert (df["Charger #"] >= 1).all()
 
@@ -196,7 +163,6 @@ class TestToStationTable:
         assert (df["Wait (min)"] >= 0).all()
 
     def test_row_count_matches_buses_that_used_station(self):
-        """Number of rows in the station table equals the number of StationSlot objects."""
         df = to_station_table(_RESULT, "A")
         expected = len(_RESULT.station_order.get("A", []))
         assert len(df) == expected
@@ -205,5 +171,5 @@ class TestToStationTable:
     def test_all_stations_return_valid_df(self, node):
         df = to_station_table(_RESULT, node)
         assert df is not None
-        # All four stations in scenario_1 should have at least some charges
+
         assert len(df) > 0, f"Station {node} has no charge records"
